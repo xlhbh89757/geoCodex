@@ -1,0 +1,89 @@
+{
+  "deepseek": {
+    "inputBox": [
+      {
+        "type": "css",
+        "value": "textarea[placeholder*='输入']",
+        "priority": 1
+      },
+      {
+        "type": "css",
+        "value": "textarea.input",
+        "priority": 2
+      },
+      {
+        "type": "css",
+        "value": "div[contenteditable='true']",
+        "priority": 3
+      },
+      {
+        "type": "xpath",
+        "value": "//textarea[@role='textbox']",
+        "priority": 4
+      }
+    ],
+    "sendButton": [
+      {
+        "type": "css",
+        "value": "button[aria-label*='发送']",
+        "priority": 1
+      },
+      {
+        "type": "css",
+        "value": "button.send-button",
+        "priority": 2
+      },
+      {
+        "type": "xpath",
+        "value": "//button[contains(., '发送')]",
+        "priority": 3
+      }
+    ],
+    "webSearchToggle": [
+      {
+        "type": "css",
+        "value": "button[aria-label*='联网']",
+        "priority": 1
+      },
+      {
+        "type": "xpath",
+        "value": "//button[contains(., '联网')]",
+        "priority": 2
+      },
+      {
+        "type": "css",
+        "value": "[data-feature='web-search']",
+        "priority": 3
+      }
+    ],
+    "answerContainer": [
+      {
+        "type": "css",
+        "value": "div.message-content",
+        "priority": 1
+      },
+      {
+        "type": "css",
+        "value": "[role='article']",
+        "priority": 2
+      },
+      {
+        "type": "xpath",
+        "value": "//div[contains(@class, 'answer')]",
+        "priority": 3
+      }
+    ],
+    "stopButton": [
+      {
+        "type": "css",
+        "value": "button[aria-label*='停止']",
+        "priority": 1
+      },
+      {
+        "type": "xpath",
+        "value": "//button[contains(., '停止')]",
+        "priority": 2
+      }
+    ]
+  }
+}

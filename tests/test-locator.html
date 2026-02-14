@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Element Locator Test</title>
+</head>
+<body>
+  <h1>Element Locator Test Page</h1>
+
+  <textarea placeholder="请输入内容" id="testInput"></textarea>
+  <button aria-label="发送消息">Send</button>
+
+  <script src="../shared/element-locator.js"></script>
+  <script>
+    // Test script
+    async function testLocator() {
+      const selectors = await fetch("../config/selectors.json").then((r) => r.json());
+      const locator = new ElementLocator("deepseek", selectors);
+
+      try {
+        const input = await locator.locate("inputBox");
+        console.log("Found input:", input);
+
+        const button = await locator.locate("sendButton");
+        console.log("Found button:", button);
+
+        alert("Locator test passed!");
+      } catch (error) {
+        console.error("Locator test failed:", error);
+        alert("Locator test failed: " + error.message);
+      }
+    }
+
+    testLocator();
+  </script>
+</body>
+</html>
