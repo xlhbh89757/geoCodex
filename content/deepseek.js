@@ -34,15 +34,40 @@ function sleep(ms) {
 async function typeText(element, text) {
   element.focus();
 
-  if ("value" in element) {
-    element.value = text;
+  if (element instanceof HTMLTextAreaElement) {
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value"
+    )?.set;
+    if (setter) {
+      setter.call(element, text);
+    } else {
+      element.value = text;
+    }
+  } else if (element instanceof HTMLInputElement) {
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value"
+    )?.set;
+    if (setter) {
+      setter.call(element, text);
+    } else {
+      element.value = text;
+    }
   } else if (element.isContentEditable) {
-    element.textContent = text;
+    // execCommand works more reliably on some rich text editors.
+    const usedExecCommand = typeof document.execCommand === "function" &&
+      document.execCommand("insertText", false, text);
+    if (!usedExecCommand) {
+      element.textContent = text;
+    }
   }
 
-  // Trigger input event
+  // Trigger common input/change events used by reactive frameworks.
   const inputEvent = new Event("input", { bubbles: true });
+  const changeEvent = new Event("change", { bubbles: true });
   element.dispatchEvent(inputEvent);
+  element.dispatchEvent(changeEvent);
   await sleep(500);
 }
 
@@ -93,7 +118,11 @@ async function locateSendButton(inputElement) {
       return localButton;
     }
 
-    const fallbackButtons = Array.from(document.querySelectorAll("button"))
+    const fallbackButtons = Array.from(
+      document.querySelectorAll(
+        "button, [role='button'][aria-label], [data-testid*='send'], [class*='send']"
+      )
+    )
       .filter((el) => isElementVisible(el) && !el.disabled);
     if (fallbackButtons.length > 0) {
       return fallbackButtons[fallbackButtons.length - 1];
@@ -101,6 +130,58 @@ async function locateSendButton(inputElement) {
 
     throw primaryError;
   }
+}
+
+function submitByKeyboard(inputElement, ctrlKey) {
+  if (!inputElement) return;
+  inputElement.focus();
+
+  const eventInit = {
+    key: "Enter",
+    code: "Enter",
+    keyCode: 13,
+    which: 13,
+    bubbles: true,
+    cancelable: true,
+    ctrlKey
+  };
+
+  inputElement.dispatchEvent(new KeyboardEvent("keydown", eventInit));
+  inputElement.dispatchEvent(new KeyboardEvent("keypress", eventInit));
+  inputElement.dispatchEvent(new KeyboardEvent("keyup", eventInit));
+}
+
+function submitByForm(inputElement) {
+  if (!inputElement || !inputElement.closest) return false;
+  const form = inputElement.closest("form");
+  if (!form) return false;
+
+  if (typeof form.requestSubmit === "function") {
+    form.requestSubmit();
+    return true;
+  }
+
+  form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  return true;
+}
+
+async function sendQuestion(inputElement) {
+  try {
+    const sendBtn = await locateSendButton(inputElement);
+    sendBtn.click();
+    return "button";
+  } catch (error) {
+    console.info("Send button not found, trying form/keyboard fallback.");
+  }
+
+  if (submitByForm(inputElement)) {
+    return "form";
+  }
+
+  submitByKeyboard(inputElement, false);
+  await sleep(150);
+  submitByKeyboard(inputElement, true);
+  return "keyboard";
 }
 
 // Ensure web search is enabled
@@ -207,10 +288,9 @@ async function processQuestion(questionData) {
     const input = await locateInputBox();
     await typeText(input, questionData.question);
 
-    const sendBtn = await locateSendButton(input);
-    sendBtn.click();
+    const sendMethod = await sendQuestion(input);
 
-    console.log("Question sent, waiting for answer...");
+    console.log(`Question sent via ${sendMethod}, waiting for answer...`);
     await waitForAnswerComplete();
 
     const answerText = await extractAnswerText();
