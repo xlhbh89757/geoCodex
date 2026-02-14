@@ -3,6 +3,7 @@
 console.log("GEO Testing Assistant: Service worker initialized");
 
 const KEYWORDS = ["德科信息", "德科信息技术", "德科信息技术有限公司"];
+const CONTENT_SCRIPT_FILES = ["shared/element-locator.js", "content/deepseek.js"];
 
 let currentSession = null;
 
@@ -305,6 +306,7 @@ async function waitForTabComplete(tabId, expectedUrl, currentTabUrl = "", timeou
 
 async function waitForContentScript(tabId, timeoutMs = 30000) {
   const start = Date.now();
+  let injected = false;
 
   while (Date.now() - start < timeoutMs) {
     try {
@@ -314,7 +316,14 @@ async function waitForContentScript(tabId, timeoutMs = 30000) {
       }
     } catch (error) {
       const message = error && error.message ? error.message : "";
-      if (!message.includes("Receiving end does not exist")) {
+      if (message.includes("Receiving end does not exist")) {
+        // Content scripts are not always present on already-open tabs after extension reload.
+        // Try one explicit runtime injection, then continue retry loop.
+        if (!injected) {
+          await tryInjectContentScripts(tabId);
+          injected = true;
+        }
+      } else {
         throw error;
       }
     }
@@ -327,4 +336,15 @@ async function waitForContentScript(tabId, timeoutMs = 30000) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function tryInjectContentScripts(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: CONTENT_SCRIPT_FILES
+    });
+  } catch (error) {
+    console.warn("Content script injection attempt failed:", error);
+  }
 }
