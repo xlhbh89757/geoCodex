@@ -75,6 +75,7 @@ async function startTest(data) {
 
     const tabUrl = platform === "deepseek" ? "https://chat.deepseek.com" : "";
     const tab = await getOrCreateTab(tabUrl);
+    await ensureTabAndContentReady(tab.id, tabUrl);
 
     // Start processing questions
     processNextQuestion(tab.id);
@@ -121,6 +122,10 @@ async function processNextQuestion(tabId) {
   const questionData = questions[progress.currentIndex];
 
   try {
+    const tab = await chrome.tabs.get(tabId);
+    const expectedUrl = currentSession.platform === "deepseek" ? "https://chat.deepseek.com" : "";
+    await ensureTabAndContentReady(tabId, expectedUrl, tab.url);
+
     notifySidepanel({
       action: "questionStarted",
       question: questionData.question,
@@ -209,6 +214,7 @@ async function resumeTest() {
     const platform = currentSession.platform;
     const tabUrl = platform === "deepseek" ? "https://chat.deepseek.com" : "";
     const tab = await getOrCreateTab(tabUrl);
+    await ensureTabAndContentReady(tab.id, tabUrl);
 
     processNextQuestion(tab.id);
     notifySidepanel({ action: "testResumed" });
@@ -271,4 +277,54 @@ function notifySidepanel(message) {
   chrome.runtime.sendMessage(message).catch(() => {
     // Sidepanel might not be open, ignore error.
   });
+}
+
+async function ensureTabAndContentReady(tabId, expectedUrl, currentTabUrl = "") {
+  await waitForTabComplete(tabId, expectedUrl, currentTabUrl);
+  await waitForContentScript(tabId);
+}
+
+async function waitForTabComplete(tabId, expectedUrl, currentTabUrl = "", timeoutMs = 30000) {
+  const expectedOrigin = new URL(expectedUrl).origin;
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    const tab = await chrome.tabs.get(tabId);
+    const tabUrl = tab.url || currentTabUrl || "";
+    const status = tab.status || "";
+
+    if (tabUrl.startsWith(expectedOrigin) && status === "complete") {
+      return;
+    }
+
+    await sleep(300);
+  }
+
+  throw new Error(`Target tab not ready within ${timeoutMs / 1000}s`);
+}
+
+async function waitForContentScript(tabId, timeoutMs = 30000) {
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const response = await chrome.tabs.sendMessage(tabId, { action: "ping" });
+      if (response && response.ready) {
+        return;
+      }
+    } catch (error) {
+      const message = error && error.message ? error.message : "";
+      if (!message.includes("Receiving end does not exist")) {
+        throw error;
+      }
+    }
+
+    await sleep(300);
+  }
+
+  throw new Error(`Content script not ready within ${timeoutMs / 1000}s`);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

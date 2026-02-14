@@ -177,6 +177,11 @@ async function processQuestion(questionData) {
 
 // Listen for messages from background
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === "ping") {
+    sendResponse({ ready: true });
+    return false;
+  }
+
   if (message.action === "processQuestion") {
     processQuestion(message.questionData)
       .then((result) => {
