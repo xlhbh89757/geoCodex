@@ -13,9 +13,24 @@
 
   <script src="../shared/element-locator.js"></script>
   <script>
+    const selectors = {
+      deepseek: {
+        inputBox: [
+          { type: "css", value: "textarea[placeholder*='输入']", priority: 1 },
+          { type: "css", value: "textarea.input", priority: 2 },
+          { type: "css", value: "div[contenteditable='true']", priority: 3 },
+          { type: "xpath", value: "//textarea[@role='textbox']", priority: 4 }
+        ],
+        sendButton: [
+          { type: "css", value: "button[aria-label*='发送']", priority: 1 },
+          { type: "css", value: "button.send-button", priority: 2 },
+          { type: "xpath", value: "//button[contains(., '发送')]", priority: 3 }
+        ]
+      }
+    };
+
     // Test script
     async function testLocator() {
-      const selectors = await fetch("../config/selectors.json").then((r) => r.json());
       const locator = new ElementLocator("deepseek", selectors);
 
       try {
