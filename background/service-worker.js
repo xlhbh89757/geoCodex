@@ -87,7 +87,12 @@ async function startTest(data) {
 
 // Get or create tab for platform
 async function getOrCreateTab(url) {
-  const tabs = await chrome.tabs.query({ url: `${url}*` });
+  if (!url) {
+    throw new Error("Platform URL is empty");
+  }
+
+  const queryPattern = toTabQueryPattern(url);
+  const tabs = await chrome.tabs.query({ url: queryPattern });
 
   if (tabs.length > 0) {
     await chrome.tabs.update(tabs[0].id, { active: true });
@@ -95,6 +100,11 @@ async function getOrCreateTab(url) {
   }
 
   return chrome.tabs.create({ url, active: true });
+}
+
+function toTabQueryPattern(url) {
+  const parsed = new URL(url);
+  return `${parsed.origin}/*`;
 }
 
 async function processNextQuestion(tabId) {
