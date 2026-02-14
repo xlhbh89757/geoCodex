@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GEO 测评助手</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>GEO 效果测评助手</h1>
+    </header>
+
+    <section class="upload-section">
+      <h2>上传询问词库</h2>
+      <input type="file" id="fileInput" accept=".xlsx">
+      <div id="fileInfo" class="file-info hidden"></div>
+    </section>
+
+    <section class="config-section">
+      <h2>测试配置</h2>
+      <div class="config-item">
+        <label for="platformSelect">平台:</label>
+        <select id="platformSelect">
+          <option value="deepseek">DeepSeek</option>
+        </select>
+      </div>
+      <div class="config-item">
+        <label>关键词:</label>
+        <span>德科信息, 德科信息技术, 德科信息技术有限公司</span>
+      </div>
+    </section>
+
+    <section class="control-section">
+      <button id="startBtn" class="btn btn-primary" disabled>开始测试</button>
+      <button id="pauseBtn" class="btn btn-secondary hidden">暂停</button>
+    </section>
+
+    <section class="progress-section hidden" id="progressSection">
+      <h2>测试进度</h2>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="progress-text" id="progressText">0 / 0</div>
+      <div class="current-question" id="currentQuestion"></div>
+      <div class="status-text" id="statusText"></div>
+    </section>
+
+    <section class="history-section">
+      <h2>历史记录</h2>
+      <div id="historyList" class="history-list"></div>
+    </section>
+
+    <section class="action-section">
+      <button id="reportBtn" class="btn btn-primary" disabled>生成报告</button>
+    </section>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>
