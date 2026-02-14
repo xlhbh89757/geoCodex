@@ -64,7 +64,7 @@ async function ensureWebSearchEnabled() {
       }
     }
   } catch (error) {
-    console.warn("Could not locate web search toggle:", error);
+    console.info("Web search toggle not found, continuing without explicit toggle.");
     // Continue anyway - might be enabled by default.
   }
 }
