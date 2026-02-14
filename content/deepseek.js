@@ -46,6 +46,63 @@ async function typeText(element, text) {
   await sleep(500);
 }
 
+function isElementVisible(element) {
+  if (!element) return false;
+  const style = window.getComputedStyle(element);
+  const rect = element.getBoundingClientRect();
+  return style.display !== "none" &&
+    style.visibility !== "hidden" &&
+    style.opacity !== "0" &&
+    rect.width > 0 &&
+    rect.height > 0;
+}
+
+function canTypeInto(element) {
+  if (!element) return false;
+  if (element.matches("textarea, input[type='text'], input:not([type])")) {
+    return !element.disabled && !element.readOnly;
+  }
+  return element.isContentEditable;
+}
+
+async function locateInputBox() {
+  try {
+    return await locator.locate("inputBox");
+  } catch (primaryError) {
+    const fallbackCandidates = Array.from(
+      document.querySelectorAll("textarea, div[contenteditable='true'], input[type='text']")
+    ).filter((el) => isElementVisible(el) && canTypeInto(el));
+
+    if (fallbackCandidates.length > 0) {
+      // Prefer the last visible input in chat UIs (usually the active composer).
+      return fallbackCandidates[fallbackCandidates.length - 1];
+    }
+
+    throw primaryError;
+  }
+}
+
+async function locateSendButton(inputElement) {
+  try {
+    return await locator.locate("sendButton");
+  } catch (primaryError) {
+    const localButton = inputElement && inputElement.parentElement
+      ? inputElement.parentElement.querySelector("button")
+      : null;
+    if (localButton && isElementVisible(localButton) && !localButton.disabled) {
+      return localButton;
+    }
+
+    const fallbackButtons = Array.from(document.querySelectorAll("button"))
+      .filter((el) => isElementVisible(el) && !el.disabled);
+    if (fallbackButtons.length > 0) {
+      return fallbackButtons[fallbackButtons.length - 1];
+    }
+
+    throw primaryError;
+  }
+}
+
 // Ensure web search is enabled
 async function ensureWebSearchEnabled() {
   try {
@@ -147,10 +204,10 @@ async function processQuestion(questionData) {
     console.log("Processing question:", questionData.question);
     await ensureWebSearchEnabled();
 
-    const input = await locator.locate("inputBox");
+    const input = await locateInputBox();
     await typeText(input, questionData.question);
 
-    const sendBtn = await locator.locate("sendButton");
+    const sendBtn = await locateSendButton(input);
     sendBtn.click();
 
     console.log("Question sent, waiting for answer...");

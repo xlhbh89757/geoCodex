@@ -3,12 +3,12 @@
     "inputBox": [
       {
         "type": "css",
-        "value": "textarea[placeholder*='输入']",
+        "value": "textarea",
         "priority": 1
       },
       {
         "type": "css",
-        "value": "textarea.input",
+        "value": "div[contenteditable='true'][role='textbox']",
         "priority": 2
       },
       {
@@ -18,70 +18,80 @@
       },
       {
         "type": "xpath",
-        "value": "//textarea[@role='textbox']",
+        "value": "//textarea[@role='textbox' or @aria-label]",
         "priority": 4
       }
     ],
     "sendButton": [
       {
         "type": "css",
-        "value": "button[aria-label*='发送']",
+        "value": "button[type='submit']",
         "priority": 1
       },
       {
         "type": "css",
-        "value": "button.send-button",
+        "value": "button[aria-label*='Send']",
         "priority": 2
       },
       {
-        "type": "xpath",
-        "value": "//button[contains(., '发送')]",
+        "type": "css",
+        "value": "button[data-testid*='send']",
         "priority": 3
+      },
+      {
+        "type": "position",
+        "value": "input-sibling-button",
+        "priority": 4
+      },
+      {
+        "type": "xpath",
+        "value": "//button[contains(., 'Send') or contains(., 'send') or contains(., '发送')]",
+        "priority": 5
       }
     ],
     "webSearchToggle": [
       {
         "type": "css",
-        "value": "button[aria-label*='联网']",
+        "value": "[data-feature='web-search']",
         "priority": 1
       },
       {
-        "type": "xpath",
-        "value": "//button[contains(., '联网')]",
+        "type": "css",
+        "value": "button[aria-label*='Search']",
         "priority": 2
       },
       {
-        "type": "css",
-        "value": "[data-feature='web-search']",
+        "type": "xpath",
+        "value": "//button[contains(., 'Search') or contains(., '联网')]",
         "priority": 3
       }
     ],
     "answerContainer": [
       {
         "type": "css",
-        "value": "div.message-content",
+        "value": "[role='article']",
         "priority": 1
       },
       {
         "type": "css",
-        "value": "[role='article']",
+        "value": "div.message-content",
         "priority": 2
       },
       {
         "type": "xpath",
-        "value": "//div[contains(@class, 'answer')]",
+        "value": "//div[contains(@class, 'answer') or contains(@class, 'assistant')]",
         "priority": 3
       }
     ],
     "stopButton": [
       {
         "type": "css",
-        "value": "button[aria-label*='停止']",
+        "value": "button[aria-label*='Stop']",
         "priority": 1
       },
       {
         "type": "xpath",
-        "value": "//button[contains(., '停止')]",
+        "value": "//button[contains(., 'Stop') or contains(., '停止')]",
         "priority": 2
       }
     ]
