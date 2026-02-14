@@ -99,3 +99,55 @@ section {
   gap: 8px;
   margin-bottom: 8px;
 }
+
+.current-question {
+  font-style: italic;
+  color: #666;
+  margin: 8px 0;
+}
+
+.status-text {
+  color: #666;
+  font-size: 13px;
+}
+
+.history-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.history-item {
+  padding: 8px;
+  margin-bottom: 8px;
+  background: #f8f9fa;
+  border-radius: 4px;
+  border-left: 3px solid #007bff;
+}
+
+.history-date {
+  font-size: 12px;
+  color: #666;
+}
+
+.history-platform {
+  font-weight: 600;
+  margin: 4px 0;
+}
+
+.history-rate {
+  font-size: 13px;
+  color: #28a745;
+}
+
+.btn-small {
+  padding: 4px 8px;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.empty-state {
+  color: #999;
+  font-style: italic;
+  text-align: center;
+  padding: 20px;
+}
