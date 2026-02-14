@@ -28,6 +28,10 @@ async function handleFileUpload(event) {
   }
 
   try {
+    if (typeof parseExcelFile !== "function") {
+      throw new Error("Excel 解析器未加载，请重新加载扩展");
+    }
+
     // Parse questions from Excel
     currentQuestions = await parseExcelFile(file);
 
