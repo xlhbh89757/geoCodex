@@ -13,10 +13,12 @@ const elements = {
   historyList: document.getElementById("historyList")
 };
 
+let currentQuestions = null;
+
 // File upload handler
 elements.fileInput.addEventListener("change", handleFileUpload);
 
-function handleFileUpload(event) {
+async function handleFileUpload(event) {
   const file = event.target.files[0];
   if (!file) return;
 
@@ -25,9 +27,20 @@ function handleFileUpload(event) {
     return;
   }
 
-  elements.fileInfo.textContent = `已选择: ${file.name}`;
-  elements.fileInfo.classList.remove("hidden");
-  elements.startBtn.disabled = false;
+  try {
+    // Parse questions from Excel
+    currentQuestions = await parseExcelFile(file);
+
+    elements.fileInfo.textContent = `已选择: ${file.name} (${currentQuestions.length} 条询问词)`;
+    elements.fileInfo.classList.remove("hidden");
+    elements.startBtn.disabled = false;
+
+    console.log("Parsed questions:", currentQuestions.length);
+  } catch (error) {
+    alert(`文件解析失败: ${error.message}`);
+    elements.fileInput.value = "";
+    elements.startBtn.disabled = true;
+  }
 }
 
 console.log("Sidepanel initialized");
