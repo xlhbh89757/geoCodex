@@ -3,7 +3,11 @@
 console.log("GEO Testing Assistant: Service worker initialized");
 
 const KEYWORDS = ["德科信息", "德科信息技术", "德科信息技术有限公司"];
-const CONTENT_SCRIPT_FILES = ["shared/element-locator.js", "content/deepseek.js"];
+const CONTENT_SCRIPT_FILES = [
+  "shared/element-locator.js",
+  "shared/answer-completion.js",
+  "content/deepseek.js"
+];
 
 let currentSession = null;
 

@@ -184,6 +184,34 @@ async function sendQuestion(inputElement) {
   return "keyboard";
 }
 
+function getLatestAssistantText() {
+  const containers = document.querySelectorAll("[role='article'], .message-content");
+  if (containers.length === 0) {
+    return "";
+  }
+
+  const assistantMessages = Array.from(containers).filter((el) => {
+    return !el.classList.contains("user-message") &&
+      !el.querySelector("[data-role='user']");
+  });
+
+  if (assistantMessages.length === 0) {
+    return "";
+  }
+
+  const lastMessage = assistantMessages[assistantMessages.length - 1];
+  return lastMessage.innerText || lastMessage.textContent || "";
+}
+
+async function hasVisibleStopButton() {
+  try {
+    const stopBtn = await locator.locate("stopButton", 350);
+    return !!(stopBtn && locator.isVisible(stopBtn));
+  } catch (error) {
+    return false;
+  }
+}
+
 // Ensure web search is enabled
 async function ensureWebSearchEnabled() {
   try {
@@ -208,28 +236,29 @@ async function ensureWebSearchEnabled() {
 }
 
 // Wait for answer to complete
-async function waitForAnswerComplete(maxWaitTime = 120000) {
+async function waitForAnswerComplete(baselineText, maxWaitTime = 120000) {
   const startTime = Date.now();
+  const tracker = createAnswerCompletionTracker({
+    baselineText,
+    minObserveMs: 8000,
+    minStableMs: 4000,
+    hardFallbackMs: 60000
+  });
   console.log("Waiting for answer to complete...");
 
   while (Date.now() - startTime < maxWaitTime) {
-    try {
-      const stopBtn = await locator.locate("stopButton", 500);
-      if (!stopBtn || !locator.isVisible(stopBtn)) {
-        await sleep(2000);
-        const doubleCheck = await locator.locate("stopButton", 500);
-        if (!doubleCheck || !locator.isVisible(doubleCheck)) {
-          console.log("Answer completed");
-          return true;
-        }
-      }
-    } catch (error) {
-      // Stop button not found - answer likely complete.
-      await sleep(2000);
+    const state = tracker.update({
+      now: Date.now(),
+      hasStopButton: await hasVisibleStopButton(),
+      answerText: getLatestAssistantText()
+    });
+
+    if (state.isComplete) {
+      console.log("Answer completed");
       return true;
     }
 
-    await sleep(1000);
+    await sleep(800);
   }
 
   throw new Error(`Answer timeout after ${maxWaitTime / 1000} seconds`);
@@ -288,10 +317,11 @@ async function processQuestion(questionData) {
     const input = await locateInputBox();
     await typeText(input, questionData.question);
 
+    const previousAnswerText = getLatestAssistantText();
     const sendMethod = await sendQuestion(input);
 
     console.log(`Question sent via ${sendMethod}, waiting for answer...`);
-    await waitForAnswerComplete();
+    await waitForAnswerComplete(previousAnswerText);
 
     const answerText = await extractAnswerText();
     const screenshot = await requestScreenshot();

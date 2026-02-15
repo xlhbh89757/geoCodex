@@ -23,6 +23,7 @@
       ],
       "js": [
         "shared/element-locator.js",
+        "shared/answer-completion.js",
         "content/deepseek.js"
       ],
       "run_at": "document_idle"
