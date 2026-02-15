@@ -18,6 +18,7 @@ function testNoCompletionWithoutNewAnswer() {
   let state = tracker.update({
     now: 0,
     hasStopButton: false,
+    hasSendButton: true,
     answerText: "previous answer"
   });
   assert(state.isComplete === false, "should not complete at start");
@@ -25,6 +26,7 @@ function testNoCompletionWithoutNewAnswer() {
   state = tracker.update({
     now: 12000,
     hasStopButton: false,
+    hasSendButton: true,
     answerText: "previous answer"
   });
   assert(state.isComplete === false, "should not complete without new answer");
@@ -40,18 +42,21 @@ function testCompletionAfterNewStableAnswer() {
   tracker.update({
     now: 0,
     hasStopButton: true,
+    hasSendButton: false,
     answerText: "previous answer"
   });
 
   tracker.update({
     now: 3000,
     hasStopButton: true,
+    hasSendButton: false,
     answerText: "previous answer new part"
   });
 
   const state = tracker.update({
     now: 9000,
     hasStopButton: false,
+    hasSendButton: true,
     answerText: "previous answer new part"
   });
 
@@ -68,22 +73,82 @@ function testNoCompletionWhileStopVisible() {
   tracker.update({
     now: 0,
     hasStopButton: true,
+    hasSendButton: false,
     answerText: "hello"
   });
 
   const state = tracker.update({
     now: 5000,
     hasStopButton: true,
+    hasSendButton: false,
     answerText: "hello"
   });
 
   assert(state.isComplete === false, "should not complete while stop button is visible");
 }
 
+function testCompletionWhenStopTurnsBackToSend() {
+  const tracker = createAnswerCompletionTracker({
+    baselineText: "previous answer",
+    minObserveMs: 8000,
+    minStableMs: 4000,
+    minReadyAfterStopMs: 1200
+  });
+
+  tracker.update({
+    now: 0,
+    hasStopButton: true,
+    hasSendButton: false,
+    answerText: "previous answer new part"
+  });
+
+  tracker.update({
+    now: 1000,
+    hasStopButton: false,
+    hasSendButton: true,
+    answerText: "previous answer new part"
+  });
+
+  const state = tracker.update({
+    now: 2300,
+    hasStopButton: false,
+    hasSendButton: true,
+    answerText: "previous answer new part"
+  });
+
+  assert(
+    state.isComplete === true,
+    "should complete quickly after stop button turns back to send"
+  );
+}
+
+function testNoCompletionWhenSendVisibleWithoutStopHistory() {
+  const tracker = createAnswerCompletionTracker({
+    baselineText: "previous answer",
+    minObserveMs: 8000,
+    minStableMs: 4000,
+    minReadyAfterStopMs: 1200
+  });
+
+  const state = tracker.update({
+    now: 2300,
+    hasStopButton: false,
+    hasSendButton: true,
+    answerText: "previous answer"
+  });
+
+  assert(
+    state.isComplete === false,
+    "should not complete only because send button is visible"
+  );
+}
+
 function run() {
   testNoCompletionWithoutNewAnswer();
   testCompletionAfterNewStableAnswer();
   testNoCompletionWhileStopVisible();
+  testCompletionWhenStopTurnsBackToSend();
+  testNoCompletionWhenSendVisibleWithoutStopHistory();
   console.log("All answer completion tests passed");
 }
 

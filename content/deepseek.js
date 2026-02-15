@@ -203,13 +203,68 @@ function getLatestAssistantText() {
   return lastMessage.innerText || lastMessage.textContent || "";
 }
 
-async function hasVisibleStopButton() {
-  try {
-    const stopBtn = await locator.locate("stopButton", 350);
-    return !!(stopBtn && locator.isVisible(stopBtn));
-  } catch (error) {
-    return false;
+function getButtonHintText(button) {
+  const parts = [
+    button.getAttribute("aria-label") || "",
+    button.getAttribute("title") || "",
+    button.getAttribute("data-testid") || "",
+    button.textContent || "",
+    button.className || ""
+  ];
+  return parts.join(" ").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function isStopControl(button) {
+  const hint = getButtonHintText(button);
+  return /(stop|停止|中止|interrupt|cancel generation)/i.test(hint);
+}
+
+function isSendControl(button) {
+  const hint = getButtonHintText(button);
+  if (/(send|发送|submit|arrow-up|up)/i.test(hint)) {
+    return true;
   }
+  return button.type === "submit";
+}
+
+function collectVisibleButtons(scopeRoot) {
+  const elements = Array.from(
+    scopeRoot.querySelectorAll("button, [role='button'][aria-label], [data-testid*='send']")
+  );
+  return elements.filter((el) => isElementVisible(el));
+}
+
+async function getSubmitControlState(inputElement) {
+  let hasStopButton = false;
+  let hasSendButton = false;
+
+  try {
+    const stopBtn = await locator.locate("stopButton", 200);
+    hasStopButton = !!(stopBtn && locator.isVisible(stopBtn));
+  } catch (error) {
+    hasStopButton = false;
+  }
+
+  const scopedRoot = inputElement && inputElement.closest
+    ? (inputElement.closest("form") || inputElement.parentElement || document)
+    : document;
+
+  const allButtons = collectVisibleButtons(scopedRoot);
+  if (allButtons.length < 2 && scopedRoot !== document) {
+    allButtons.push(...collectVisibleButtons(document));
+  }
+
+  for (const button of allButtons) {
+    if (isStopControl(button)) {
+      hasStopButton = true;
+      continue;
+    }
+    if (!button.disabled && isSendControl(button)) {
+      hasSendButton = true;
+    }
+  }
+
+  return { hasStopButton, hasSendButton };
 }
 
 // Ensure web search is enabled
@@ -236,20 +291,23 @@ async function ensureWebSearchEnabled() {
 }
 
 // Wait for answer to complete
-async function waitForAnswerComplete(baselineText, maxWaitTime = 120000) {
+async function waitForAnswerComplete(baselineText, inputElement, maxWaitTime = 120000) {
   const startTime = Date.now();
   const tracker = createAnswerCompletionTracker({
     baselineText,
     minObserveMs: 8000,
     minStableMs: 4000,
+    minReadyAfterStopMs: 1200,
     hardFallbackMs: 60000
   });
   console.log("Waiting for answer to complete...");
 
   while (Date.now() - startTime < maxWaitTime) {
+    const controlState = await getSubmitControlState(inputElement);
     const state = tracker.update({
       now: Date.now(),
-      hasStopButton: await hasVisibleStopButton(),
+      hasStopButton: controlState.hasStopButton,
+      hasSendButton: controlState.hasSendButton,
       answerText: getLatestAssistantText()
     });
 
@@ -321,7 +379,7 @@ async function processQuestion(questionData) {
     const sendMethod = await sendQuestion(input);
 
     console.log(`Question sent via ${sendMethod}, waiting for answer...`);
-    await waitForAnswerComplete(previousAnswerText);
+    await waitForAnswerComplete(previousAnswerText, input);
 
     const answerText = await extractAnswerText();
     const screenshot = await requestScreenshot();
