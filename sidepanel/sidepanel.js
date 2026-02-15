@@ -10,11 +10,17 @@ const elements = {
   currentQuestion: document.getElementById("currentQuestion"),
   statusText: document.getElementById("statusText"),
   reportBtn: document.getElementById("reportBtn"),
-  historyList: document.getElementById("historyList")
+  historyList: document.getElementById("historyList"),
+  reportRoot: document.getElementById("reportRoot")
 };
 
 let currentQuestions = null;
 let isPaused = false;
+let reportState = {
+  session: null,
+  filterType: "all",
+  searchQuery: ""
+};
 
 // File upload handler
 elements.fileInput.addEventListener("change", handleFileUpload);
@@ -24,23 +30,23 @@ async function handleFileUpload(event) {
   if (!file) return;
 
   if (!file.name.endsWith(".xlsx")) {
-    alert("请上传 .xlsx 格式的文件");
+    alert("Please upload a .xlsx file.");
     return;
   }
 
   try {
     if (typeof parseExcelFile !== "function") {
-      throw new Error("Excel 解析器未加载，请重新加载扩展");
+      throw new Error("Excel parser not loaded. Please reload extension.");
     }
 
     currentQuestions = await parseExcelFile(file);
-    elements.fileInfo.textContent = `已选择: ${file.name} (${currentQuestions.length} 条询问词)`;
+    elements.fileInfo.textContent = `Selected: ${file.name} (${currentQuestions.length} items)`;
     elements.fileInfo.classList.remove("hidden");
     elements.startBtn.disabled = false;
 
     console.log("Parsed questions:", currentQuestions.length);
   } catch (error) {
-    alert(`文件解析失败: ${error.message}`);
+    alert(`File parse failed: ${error.message}`);
     elements.fileInput.value = "";
     elements.startBtn.disabled = true;
   }
@@ -49,7 +55,7 @@ async function handleFileUpload(event) {
 // Start test button handler
 elements.startBtn.addEventListener("click", async () => {
   if (!currentQuestions || currentQuestions.length === 0) {
-    alert("请先上传询问词库");
+    alert("Please upload the question file first.");
     return;
   }
 
@@ -66,14 +72,14 @@ elements.startBtn.addEventListener("click", async () => {
       elements.progressSection.classList.remove("hidden");
       elements.startBtn.disabled = true;
       elements.pauseBtn.classList.remove("hidden");
-      elements.pauseBtn.textContent = "暂停";
+      elements.pauseBtn.textContent = "Pause";
       isPaused = false;
       updateProgress(0, currentQuestions.length);
     } else {
-      alert(`启动测试失败: ${response ? response.error : "Unknown error"}`);
+      alert(`Start test failed: ${response ? response.error : "Unknown error"}`);
     }
   } catch (error) {
-    alert(`启动测试失败: ${error.message}`);
+    alert(`Start test failed: ${error.message}`);
   }
 });
 
@@ -83,7 +89,7 @@ elements.pauseBtn.addEventListener("click", async () => {
     const response = await chrome.runtime.sendMessage({ action: "pauseTest" });
     if (response && response.success) {
       isPaused = true;
-      elements.pauseBtn.textContent = "恢复";
+      elements.pauseBtn.textContent = "Resume";
     }
     return;
   }
@@ -91,11 +97,22 @@ elements.pauseBtn.addEventListener("click", async () => {
   const response = await chrome.runtime.sendMessage({ action: "resumeTest" });
   if (response && response.success) {
     isPaused = false;
-    elements.pauseBtn.textContent = "暂停";
+    elements.pauseBtn.textContent = "Pause";
   }
 });
 
-// Update progress display
+// Report button handler
+elements.reportBtn.addEventListener("click", async () => {
+  const session = await getCurrentSession();
+
+  if (!session || !Array.isArray(session.results) || session.results.length === 0) {
+    alert("No report data available.");
+    return;
+  }
+
+  showReport(session);
+});
+
 function updateProgress(completed, total) {
   const percentage = total > 0 ? (completed / total) * 100 : 0;
   elements.progressFill.style.width = `${percentage}%`;
@@ -105,58 +122,16 @@ function updateProgress(completed, total) {
   const estimatedMinutes = Math.ceil((remaining * 30) / 60);
 
   if (remaining > 0) {
-    elements.statusText.textContent = `预计剩余时间: 约 ${estimatedMinutes} 分钟`;
+    elements.statusText.textContent = `Estimated remaining: ~${estimatedMinutes} minute(s)`;
   } else {
-    elements.statusText.textContent = "测试完成";
+    elements.statusText.textContent = "Test completed";
     elements.reportBtn.disabled = false;
   }
 }
 
-// Listen for messages from background
-chrome.runtime.onMessage.addListener((message) => {
-  switch (message.action) {
-    case "questionStarted":
-      elements.currentQuestion.textContent = `当前问题: "${message.question}"`;
-      elements.statusText.textContent = "等待回答完成...";
-      break;
-
-    case "progressUpdate":
-      updateProgress(message.progress.completed, message.progress.total);
-      break;
-
-    case "testCompleted":
-      elements.currentQuestion.textContent = "";
-      elements.statusText.textContent = "测试已完成";
-      elements.pauseBtn.classList.add("hidden");
-      elements.reportBtn.disabled = false;
-      loadHistory();
-      break;
-
-    case "testPaused":
-      isPaused = true;
-      elements.pauseBtn.textContent = "恢复";
-      elements.statusText.textContent = "测试已暂停";
-      break;
-
-    case "testResumed":
-      isPaused = false;
-      elements.pauseBtn.textContent = "暂停";
-      elements.statusText.textContent = "继续测试中...";
-      break;
-
-    case "error":
-      elements.statusText.textContent = `错误: ${message.error}`;
-      showErrorDialog(message.error, message.question);
-      break;
-
-    default:
-      break;
-  }
-});
-
 function showErrorDialog(error, question) {
   const userAction = confirm(
-    `测试遇到错误:\n${error}\n\n问题: ${question}\n\n点击“确定”继续（恢复），点击“取消”保持暂停`
+    `Test error:\n${error}\n\nQuestion: ${question}\n\nClick OK to continue (resume), Cancel to stay paused.`
   );
 
   if (userAction) {
@@ -164,13 +139,403 @@ function showErrorDialog(error, question) {
   }
 }
 
-// Load and display history
+async function getCurrentSession() {
+  const result = await chrome.storage.local.get("currentSession");
+  return result.currentSession || null;
+}
+
+function closeReport() {
+  const reportView = document.getElementById("reportView");
+  if (reportView) {
+    reportView.remove();
+  }
+  document.querySelector(".container").classList.remove("hidden");
+}
+
+function showReport(session) {
+  reportState = {
+    session,
+    filterType: "all",
+    searchQuery: ""
+  };
+
+  document.querySelector(".container").classList.add("hidden");
+
+  const reportView = document.createElement("div");
+  reportView.id = "reportView";
+  reportView.className = "report-container";
+  reportView.innerHTML = generateReportHTML(session);
+
+  const root = elements.reportRoot || document.body;
+  root.appendChild(reportView);
+
+  attachReportListeners();
+  applyReportFilters();
+}
+
+function generateReportHTML(session) {
+  const { results, platform, startTime, completedTime } = session;
+  const totalQuestions = results.length;
+  const hitCount = results.filter((r) => r.isHit).length;
+  const hitRate = totalQuestions > 0 ? ((hitCount / totalQuestions) * 100).toFixed(2) : "0.00";
+  const duration = startTime && completedTime
+    ? Math.max(0, Math.floor((completedTime - startTime) / 60000))
+    : 0;
+
+  return `
+    <div class="report-header">
+      <div>
+        <h1>Test Report</h1>
+        <p>${escapeHtml(platform || "unknown")} - ${formatDateTime(startTime)}</p>
+      </div>
+      <button id="reportBackBtn" class="btn btn-secondary">Back</button>
+    </div>
+
+    <div class="report-summary">
+      <h2>Summary</h2>
+      <div class="metric-card">
+        <div class="metric-title">Hit Rate</div>
+        <div class="metric-value">${hitRate}%</div>
+        <div class="metric-subtitle">${hitCount} / ${totalQuestions}</div>
+      </div>
+      <div class="metric-row">
+        <div class="metric-item">
+          <span class="metric-label">Total Questions</span>
+          <span class="metric-data">${totalQuestions}</span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-label">Hits</span>
+          <span class="metric-data success">${hitCount}</span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-label">Misses</span>
+          <span class="metric-data">${totalQuestions - hitCount}</span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-label">Duration</span>
+          <span class="metric-data">${duration} min</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="report-filters">
+      <h2>Filter and Search</h2>
+      <div class="filter-row">
+        <select id="filterType" class="filter-select">
+          <option value="all">All</option>
+          <option value="hit">Hits Only</option>
+          <option value="miss">Misses Only</option>
+        </select>
+        <input type="text" id="searchInput" class="search-input" placeholder="Search question...">
+      </div>
+    </div>
+
+    <div class="report-details">
+      <h2>Detailed Results</h2>
+      <div id="resultsList" class="results-list"></div>
+    </div>
+
+    <div class="report-actions">
+      <button id="exportBtn" class="btn btn-primary">Export CSV</button>
+      <button id="closeReportBtn" class="btn btn-secondary">Close</button>
+    </div>
+  `;
+}
+
+function attachReportListeners() {
+  const filterType = document.getElementById("filterType");
+  const searchInput = document.getElementById("searchInput");
+  const backBtn = document.getElementById("reportBackBtn");
+  const closeBtn = document.getElementById("closeReportBtn");
+  const exportBtn = document.getElementById("exportBtn");
+  const resultsList = document.getElementById("resultsList");
+
+  if (filterType) {
+    filterType.addEventListener("change", (event) => {
+      reportState.filterType = event.target.value;
+      applyReportFilters();
+    });
+  }
+
+  if (searchInput) {
+    searchInput.addEventListener("input", (event) => {
+      reportState.searchQuery = event.target.value || "";
+      applyReportFilters();
+    });
+  }
+
+  if (backBtn) backBtn.addEventListener("click", closeReport);
+  if (closeBtn) closeBtn.addEventListener("click", closeReport);
+  if (exportBtn) exportBtn.addEventListener("click", exportToExcel);
+
+  if (resultsList) {
+    resultsList.addEventListener("click", async (event) => {
+      const button = event.target.closest("button[data-action]");
+      if (!button) return;
+
+      const action = button.getAttribute("data-action");
+      const index = Number.parseInt(button.getAttribute("data-index") || "-1", 10);
+      if (Number.isNaN(index) || index < 0) return;
+
+      switch (action) {
+        case "screenshot":
+          await viewScreenshot(index);
+          break;
+        case "answer":
+          await viewAnswer(index);
+          break;
+        default:
+          break;
+      }
+    });
+  }
+}
+
+function applyReportFilters() {
+  if (!reportState.session) return;
+
+  const filterType = reportState.filterType;
+  const searchQuery = reportState.searchQuery.trim().toLowerCase();
+  const source = reportState.session.results || [];
+
+  const filtered = source
+    .map((result, index) => ({ ...result, _index: index }))
+    .filter((result) => {
+      if (filterType === "hit" && !result.isHit) return false;
+      if (filterType === "miss" && result.isHit) return false;
+
+      if (searchQuery) {
+        const question = String(result.question || "").toLowerCase();
+        if (!question.includes(searchQuery)) return false;
+      }
+      return true;
+    });
+
+  const list = document.getElementById("resultsList");
+  if (list) {
+    list.innerHTML = generateResultsListHTML(filtered);
+  }
+}
+
+function generateResultsListHTML(results) {
+  if (results.length === 0) {
+    return '<p class="empty-state">No matching results.</p>';
+  }
+
+  return results.map((result) => {
+    const matched = Array.isArray(result.matchedKeywords) ? result.matchedKeywords : [];
+    const statusText = result.isHit ? "Hit" : "Miss";
+    const statusClass = result.isHit ? "hit" : "miss";
+
+    return `
+      <div class="result-item ${statusClass}" data-index="${result._index}">
+        <div class="result-header">
+          <span class="result-number">#${result._index + 1}</span>
+          <span class="result-status">${statusText}</span>
+        </div>
+        <div class="result-question">
+          <strong>Question:</strong> ${escapeHtml(result.question || "")}
+        </div>
+        ${result.isHit ? `
+          <div class="result-keywords">
+            <strong>Matched:</strong> ${escapeHtml(matched.join(", "))}
+          </div>
+        ` : ""}
+        <div class="result-actions">
+          <button class="btn-small" data-action="screenshot" data-index="${result._index}">View Screenshot</button>
+          <button class="btn-small" data-action="answer" data-index="${result._index}">View Answer</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function closeModal() {
+  const modal = document.querySelector(".modal");
+  if (modal) {
+    modal.remove();
+  }
+}
+
+function openModal(title, bodyHTML, footerHTML) {
+  closeModal();
+
+  const modal = document.createElement("div");
+  modal.className = "modal";
+  modal.innerHTML = `
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>${escapeHtml(title)}</h3>
+        <button class="modal-close" id="modalCloseBtn" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">${bodyHTML}</div>
+      <div class="modal-footer">${footerHTML}</div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  const closeBtn = modal.querySelector("#modalCloseBtn");
+  if (closeBtn) {
+    closeBtn.addEventListener("click", closeModal);
+  }
+}
+
+async function viewScreenshot(index) {
+  if (!reportState.session) return;
+  const result = reportState.session.results[index];
+  if (!result || !result.screenshot) {
+    alert("No screenshot available for this result.");
+    return;
+  }
+
+  const bodyHTML = `
+    <p><strong>Question:</strong> ${escapeHtml(result.question || "")}</p>
+    <img src="${result.screenshot}" alt="Screenshot" class="screenshot-img">
+  `;
+
+  const footerHTML = `
+    <button class="btn btn-primary" id="downloadShotBtn">Download</button>
+    <button class="btn btn-secondary" id="closeShotBtn">Close</button>
+  `;
+
+  openModal("Conversation Screenshot", bodyHTML, footerHTML);
+
+  const downloadBtn = document.getElementById("downloadShotBtn");
+  const closeBtn = document.getElementById("closeShotBtn");
+
+  if (downloadBtn) {
+    downloadBtn.addEventListener("click", () => downloadScreenshot(index));
+  }
+  if (closeBtn) {
+    closeBtn.addEventListener("click", closeModal);
+  }
+}
+
+async function viewAnswer(index) {
+  if (!reportState.session) return;
+  const result = reportState.session.results[index];
+  if (!result) return;
+
+  const matched = Array.isArray(result.matchedKeywords) ? result.matchedKeywords : [];
+  const bodyHTML = `
+    <p><strong>Question:</strong> ${escapeHtml(result.question || "")}</p>
+    <div class="answer-text">${escapeHtml(result.answer || "No answer text available.")}</div>
+    ${result.isHit ? `
+      <div class="keywords-match">
+        <strong>Matched Keywords:</strong> ${escapeHtml(matched.join(", "))}
+      </div>
+    ` : ""}
+  `;
+
+  const footerHTML = `
+    <button class="btn btn-primary" id="copyAnswerBtn">Copy Text</button>
+    <button class="btn btn-secondary" id="closeAnswerBtn">Close</button>
+  `;
+
+  openModal("Full Answer", bodyHTML, footerHTML);
+
+  const copyBtn = document.getElementById("copyAnswerBtn");
+  const closeBtn = document.getElementById("closeAnswerBtn");
+  if (copyBtn) copyBtn.addEventListener("click", () => copyAnswer(index));
+  if (closeBtn) closeBtn.addEventListener("click", closeModal);
+}
+
+function downloadScreenshot(index) {
+  if (!reportState.session) return;
+  const result = reportState.session.results[index];
+  if (!result || !result.screenshot) return;
+
+  const link = document.createElement("a");
+  link.href = result.screenshot;
+  link.download = `screenshot_${index + 1}.png`;
+  link.click();
+}
+
+async function copyAnswer(index) {
+  if (!reportState.session) return;
+  const result = reportState.session.results[index];
+  const text = result ? (result.answer || "") : "";
+
+  try {
+    await navigator.clipboard.writeText(text);
+    alert("Answer copied to clipboard.");
+  } catch (error) {
+    alert(`Copy failed: ${error.message}`);
+  }
+}
+
+function exportToExcel() {
+  if (!reportState.session) return;
+  const { results, platform, startTime } = reportState.session;
+
+  const csvContent = generateCSV(results || []);
+  const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" });
+  const link = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+
+  const datePart = startTime ? new Date(startTime).toISOString().split("T")[0] : "unknown-date";
+  link.href = url;
+  link.download = `GEO_Report_${platform || "platform"}_${datePart}.csv`;
+  link.click();
+
+  URL.revokeObjectURL(url);
+}
+
+function generateCSV(results) {
+  const headers = ["Index", "Question", "Category", "Hit", "Matched Keywords", "Timestamp"];
+  const rows = results.map((result, index) => [
+    index + 1,
+    csvCell(result.question || ""),
+    csvCell(result.category || ""),
+    result.isHit ? "Yes" : "No",
+    csvCell(Array.isArray(result.matchedKeywords) ? result.matchedKeywords.join(", ") : ""),
+    result.timestamp ? new Date(result.timestamp).toLocaleString() : ""
+  ]);
+
+  return [
+    headers.join(","),
+    ...rows.map((row) => row.join(","))
+  ].join("\n");
+}
+
+function csvCell(value) {
+  const text = String(value);
+  return `"${text.replace(/"/g, "\"\"")}"`;
+}
+
+function formatDateTime(value) {
+  if (!value) return "N/A";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "N/A";
+  return date.toLocaleString();
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+async function viewHistoryReport(sessionId) {
+  const current = await getCurrentSession();
+  if (current && current.id === sessionId && Array.isArray(current.results) && current.results.length > 0) {
+    showReport(current);
+    return;
+  }
+
+  alert("Detailed report is only available for the latest completed session in current implementation.");
+}
+
 async function loadHistory() {
   const result = await chrome.storage.local.get("history");
   const history = result.history || [];
 
   if (history.length === 0) {
-    elements.historyList.innerHTML = '<p class="empty-state">暂无历史记录</p>';
+    elements.historyList.innerHTML = '<p class="empty-state">No history yet.</p>';
     return;
   }
 
@@ -183,10 +548,10 @@ async function loadHistory() {
 
       return `
         <div class="history-item">
-          <div class="history-date">${new Date(item.completedTime).toLocaleString()}</div>
-          <div class="history-platform">${item.platform}</div>
-          <div class="history-rate">命中率: ${hitRatePercent}% (${item.hitCount}/${item.totalQuestions})</div>
-          <button class="btn-small" data-session-id="${item.sessionId}">查看报告</button>
+          <div class="history-date">${formatDateTime(item.completedTime)}</div>
+          <div class="history-platform">${escapeHtml(item.platform || "unknown")}</div>
+          <div class="history-rate">Hit rate: ${hitRatePercent}% (${item.hitCount}/${item.totalQuestions})</div>
+          <button class="btn-small" data-session-id="${escapeHtml(item.sessionId || "")}">View Report</button>
         </div>
       `;
     })
@@ -200,11 +565,46 @@ async function loadHistory() {
   });
 }
 
-function viewHistoryReport(sessionId) {
-  alert(`报告查看功能将在 Task 8 实现。\nSession: ${sessionId}`);
-}
+// Listen for messages from background
+chrome.runtime.onMessage.addListener((message) => {
+  switch (message.action) {
+    case "questionStarted":
+      elements.currentQuestion.textContent = `Current question: "${message.question}"`;
+      elements.statusText.textContent = "Waiting for answer...";
+      break;
+    case "progressUpdate":
+      updateProgress(message.progress.completed, message.progress.total);
+      break;
+    case "testCompleted":
+      elements.currentQuestion.textContent = "";
+      elements.statusText.textContent = "Test completed";
+      elements.pauseBtn.classList.add("hidden");
+      elements.reportBtn.disabled = false;
+      loadHistory();
+      break;
+    case "testPaused":
+      isPaused = true;
+      elements.pauseBtn.textContent = "Resume";
+      elements.statusText.textContent = "Test paused";
+      break;
+    case "testResumed":
+      isPaused = false;
+      elements.pauseBtn.textContent = "Pause";
+      elements.statusText.textContent = "Test running...";
+      break;
+    case "error":
+      elements.statusText.textContent = `Error: ${message.error}`;
+      showErrorDialog(message.error, message.question);
+      break;
+    default:
+      break;
+  }
+});
+
+// Expose modal/report close for fallback inline handlers if any.
+window.closeReport = closeReport;
+window.closeModal = closeModal;
 
 // Initialize history on startup
 loadHistory();
-
 console.log("Sidepanel initialized");
