@@ -203,6 +203,24 @@ function getLatestAssistantText() {
   return lastMessage.innerText || lastMessage.textContent || "";
 }
 
+function getStreamingFingerprint() {
+  const containers = Array.from(document.querySelectorAll("[role='article'], .message-content"));
+
+  if (containers.length > 0) {
+    const tailTexts = containers
+      .slice(-4)
+      .map((el) => (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    if (tailTexts.length > 0) {
+      return tailTexts.join(" || ");
+    }
+  }
+
+  // Fallback: use body tail text to detect streaming changes.
+  const bodyText = (document.body && document.body.innerText) ? document.body.innerText : "";
+  return bodyText.slice(-3000).replace(/\s+/g, " ").trim();
+}
+
 function getButtonHintText(button) {
   const parts = [
     button.getAttribute("aria-label") || "",
@@ -252,6 +270,26 @@ function pickPrimaryActionButton(inputElement, scopedButtons, globalButtons) {
   const preferred = scopedButtons.length > 0 ? scopedButtons : globalButtons;
   if (preferred.length === 0) {
     return null;
+  }
+
+  if (inputElement && typeof inputElement.getBoundingClientRect === "function") {
+    const inputRect = inputElement.getBoundingClientRect();
+    const anchorX = inputRect.left + inputRect.width / 2;
+    const anchorY = inputRect.top + inputRect.height / 2;
+    const scored = preferred.map((button) => {
+      const rect = button.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const dx = centerX - anchorX;
+      const dy = centerY - anchorY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      return { button, distance };
+    });
+
+    scored.sort((a, b) => a.distance - b.distance);
+    if (scored.length > 0) {
+      return scored[0].button;
+    }
   }
 
   const enabledPreferred = preferred.filter((button) => !button.disabled);
@@ -328,21 +366,21 @@ async function ensureWebSearchEnabled() {
 
 // Wait for answer to complete
 async function waitForAnswerComplete(
-  baselineText,
+  baselineFingerprint,
   inputElement,
   baselineControlSignature,
   maxWaitTime = 120000
 ) {
   const startTime = Date.now();
   const tracker = createAnswerCompletionTracker({
-    baselineText,
+    baselineText: baselineFingerprint,
     baselineControlSignature,
-    minObserveMs: 8000,
-    minStableMs: 4000,
-    minNoStopAfterSeenMs: 1200,
-    minStableAfterStopMs: 600,
-    minControlReturnMs: 700,
-    hardFallbackMs: 60000
+    minObserveMs: 2500,
+    minStableMs: 1800,
+    minNoStopAfterSeenMs: 900,
+    minStableAfterStopMs: 500,
+    minControlReturnMs: 600,
+    hardFallbackMs: 30000
   });
   console.log("Waiting for answer to complete...");
 
@@ -353,7 +391,7 @@ async function waitForAnswerComplete(
       hasStopButton: controlState.hasStopButton,
       hasSendButton: controlState.hasSendButton,
       controlSignature: controlState.controlSignature,
-      answerText: getLatestAssistantText()
+      answerText: getStreamingFingerprint()
     });
 
     if (state.isComplete) {
@@ -420,12 +458,12 @@ async function processQuestion(questionData) {
     const input = await locateInputBox();
     await typeText(input, questionData.question);
 
-    const previousAnswerText = getLatestAssistantText();
+    const previousFingerprint = getStreamingFingerprint();
     const baselineControlSignature = (await getSubmitControlState(input)).controlSignature;
     const sendMethod = await sendQuestion(input);
 
     console.log(`Question sent via ${sendMethod}, waiting for answer...`);
-    await waitForAnswerComplete(previousAnswerText, input, baselineControlSignature);
+    await waitForAnswerComplete(previousFingerprint, input, baselineControlSignature);
 
     const answerText = await extractAnswerText();
     const screenshot = await requestScreenshot();
