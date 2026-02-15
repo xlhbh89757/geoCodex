@@ -8,7 +8,8 @@ function createAnswerCompletionTracker(options = {}) {
   const baseline = normalizeText(options.baselineText || "");
   const minObserveMs = Number(options.minObserveMs || 8000);
   const minStableMs = Number(options.minStableMs || 4000);
-  const minReadyAfterStopMs = Number(options.minReadyAfterStopMs || 1200);
+  const minNoStopAfterSeenMs = Number(options.minNoStopAfterSeenMs || 1200);
+  const minStableAfterStopMs = Number(options.minStableAfterStopMs || 600);
   const hardFallbackMs = Number(options.hardFallbackMs || 60000);
 
   let startedAt = null;
@@ -16,7 +17,7 @@ function createAnswerCompletionTracker(options = {}) {
   let lastChangedAt = null;
   let observedNewAnswer = false;
   let sawStopButton = false;
-  let sendReadySince = null;
+  let noStopSince = null;
 
   function update(input) {
     const now = input.now == null ? Date.now() : Number(input.now);
@@ -41,13 +42,13 @@ function createAnswerCompletionTracker(options = {}) {
 
     if (hasStopButton) {
       sawStopButton = true;
-      sendReadySince = null;
-    } else if (hasSendButton) {
-      if (sendReadySince === null) {
-        sendReadySince = now;
+      noStopSince = null;
+    } else if (sawStopButton) {
+      if (noStopSince === null) {
+        noStopSince = now;
       }
     } else {
-      sendReadySince = null;
+      noStopSince = null;
     }
 
     const elapsed = now - startedAt;
@@ -55,14 +56,15 @@ function createAnswerCompletionTracker(options = {}) {
     const stableAndObserved = observedNewAnswer &&
       elapsed >= minObserveMs &&
       stableMs >= minStableMs;
-    const sendReturnedAfterStop = sawStopButton &&
-      sendReadySince !== null &&
-      now - sendReadySince >= minReadyAfterStopMs;
+    const stopClearedAfterSeen = sawStopButton &&
+      noStopSince !== null &&
+      now - noStopSince >= minNoStopAfterSeenMs &&
+      stableMs >= minStableAfterStopMs;
     const hitHardFallback = elapsed >= hardFallbackMs && stableMs >= minStableMs;
 
     return {
       isComplete: !hasStopButton && (
-        sendReturnedAfterStop ||
+        stopClearedAfterSeen ||
         stableAndObserved ||
         hitHardFallback
       ),

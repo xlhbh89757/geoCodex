@@ -297,7 +297,8 @@ async function waitForAnswerComplete(baselineText, inputElement, maxWaitTime = 1
     baselineText,
     minObserveMs: 8000,
     minStableMs: 4000,
-    minReadyAfterStopMs: 1200,
+    minNoStopAfterSeenMs: 1200,
+    minStableAfterStopMs: 600,
     hardFallbackMs: 60000
   });
   console.log("Waiting for answer to complete...");

@@ -92,7 +92,7 @@ function testCompletionWhenStopTurnsBackToSend() {
     baselineText: "previous answer",
     minObserveMs: 8000,
     minStableMs: 4000,
-    minReadyAfterStopMs: 1200
+    minNoStopAfterSeenMs: 1200
   });
 
   tracker.update({
@@ -127,7 +127,7 @@ function testNoCompletionWhenSendVisibleWithoutStopHistory() {
     baselineText: "previous answer",
     minObserveMs: 8000,
     minStableMs: 4000,
-    minReadyAfterStopMs: 1200
+    minNoStopAfterSeenMs: 1200
   });
 
   const state = tracker.update({
@@ -143,12 +143,49 @@ function testNoCompletionWhenSendVisibleWithoutStopHistory() {
   );
 }
 
+function testCompletionWhenStopGoneEvenIfSendDisabled() {
+  const tracker = createAnswerCompletionTracker({
+    baselineText: "previous answer",
+    minObserveMs: 8000,
+    minStableMs: 4000,
+    minNoStopAfterSeenMs: 1200,
+    minStableAfterStopMs: 600
+  });
+
+  tracker.update({
+    now: 0,
+    hasStopButton: true,
+    hasSendButton: false,
+    answerText: "previous answer new part"
+  });
+
+  tracker.update({
+    now: 1000,
+    hasStopButton: false,
+    hasSendButton: false,
+    answerText: "previous answer new part"
+  });
+
+  const state = tracker.update({
+    now: 2300,
+    hasStopButton: false,
+    hasSendButton: false,
+    answerText: "previous answer new part"
+  });
+
+  assert(
+    state.isComplete === true,
+    "should complete after stop is gone even if send button is disabled"
+  );
+}
+
 function run() {
   testNoCompletionWithoutNewAnswer();
   testCompletionAfterNewStableAnswer();
   testNoCompletionWhileStopVisible();
   testCompletionWhenStopTurnsBackToSend();
   testNoCompletionWhenSendVisibleWithoutStopHistory();
+  testCompletionWhenStopGoneEvenIfSendDisabled();
   console.log("All answer completion tests passed");
 }
 
