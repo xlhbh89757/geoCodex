@@ -179,6 +179,43 @@ function testCompletionWhenStopGoneEvenIfSendDisabled() {
   );
 }
 
+function testCompletionWhenPrimaryControlReturnsToBaseline() {
+  const tracker = createAnswerCompletionTracker({
+    baselineText: "previous answer",
+    baselineControlSignature: "send-state",
+    minControlReturnMs: 700
+  });
+
+  tracker.update({
+    now: 0,
+    hasStopButton: false,
+    hasSendButton: true,
+    controlSignature: "stop-state",
+    answerText: "previous answer"
+  });
+
+  tracker.update({
+    now: 500,
+    hasStopButton: false,
+    hasSendButton: true,
+    controlSignature: "send-state",
+    answerText: "previous answer"
+  });
+
+  const state = tracker.update({
+    now: 1300,
+    hasStopButton: false,
+    hasSendButton: true,
+    controlSignature: "send-state",
+    answerText: "previous answer"
+  });
+
+  assert(
+    state.isComplete === true,
+    "should complete when primary control changes and returns to baseline"
+  );
+}
+
 function run() {
   testNoCompletionWithoutNewAnswer();
   testCompletionAfterNewStableAnswer();
@@ -186,6 +223,7 @@ function run() {
   testCompletionWhenStopTurnsBackToSend();
   testNoCompletionWhenSendVisibleWithoutStopHistory();
   testCompletionWhenStopGoneEvenIfSendDisabled();
+  testCompletionWhenPrimaryControlReturnsToBaseline();
   console.log("All answer completion tests passed");
 }
 

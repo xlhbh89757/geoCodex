@@ -234,9 +234,39 @@ function collectVisibleButtons(scopeRoot) {
   return elements.filter((el) => isElementVisible(el));
 }
 
+function getButtonSignature(button) {
+  if (!button) return "";
+  const iconPath = button.querySelector("svg path")?.getAttribute("d") || "";
+  const disabled = button.disabled ? "1" : "0";
+  return [
+    disabled,
+    button.getAttribute("aria-label") || "",
+    button.getAttribute("title") || "",
+    button.getAttribute("data-testid") || "",
+    button.className || "",
+    iconPath
+  ].join("||");
+}
+
+function pickPrimaryActionButton(inputElement, scopedButtons, globalButtons) {
+  const preferred = scopedButtons.length > 0 ? scopedButtons : globalButtons;
+  if (preferred.length === 0) {
+    return null;
+  }
+
+  const enabledPreferred = preferred.filter((button) => !button.disabled);
+  if (enabledPreferred.length > 0) {
+    return enabledPreferred[enabledPreferred.length - 1];
+  }
+
+  // If all are disabled, still return the last control for state tracking.
+  return preferred[preferred.length - 1];
+}
+
 async function getSubmitControlState(inputElement) {
   let hasStopButton = false;
   let hasSendButton = false;
+  let controlSignature = "";
 
   try {
     const stopBtn = await locator.locate("stopButton", 200);
@@ -249,9 +279,15 @@ async function getSubmitControlState(inputElement) {
     ? (inputElement.closest("form") || inputElement.parentElement || document)
     : document;
 
-  const allButtons = collectVisibleButtons(scopedRoot);
-  if (allButtons.length < 2 && scopedRoot !== document) {
-    allButtons.push(...collectVisibleButtons(document));
+  const scopedButtons = collectVisibleButtons(scopedRoot);
+  const globalButtons = scopedRoot === document ? scopedButtons : collectVisibleButtons(document);
+  const allButtons = scopedRoot === document
+    ? scopedButtons
+    : scopedButtons.concat(globalButtons);
+
+  const primaryButton = pickPrimaryActionButton(inputElement, scopedButtons, globalButtons);
+  if (primaryButton) {
+    controlSignature = getButtonSignature(primaryButton);
   }
 
   for (const button of allButtons) {
@@ -264,7 +300,7 @@ async function getSubmitControlState(inputElement) {
     }
   }
 
-  return { hasStopButton, hasSendButton };
+  return { hasStopButton, hasSendButton, controlSignature };
 }
 
 // Ensure web search is enabled
@@ -291,14 +327,21 @@ async function ensureWebSearchEnabled() {
 }
 
 // Wait for answer to complete
-async function waitForAnswerComplete(baselineText, inputElement, maxWaitTime = 120000) {
+async function waitForAnswerComplete(
+  baselineText,
+  inputElement,
+  baselineControlSignature,
+  maxWaitTime = 120000
+) {
   const startTime = Date.now();
   const tracker = createAnswerCompletionTracker({
     baselineText,
+    baselineControlSignature,
     minObserveMs: 8000,
     minStableMs: 4000,
     minNoStopAfterSeenMs: 1200,
     minStableAfterStopMs: 600,
+    minControlReturnMs: 700,
     hardFallbackMs: 60000
   });
   console.log("Waiting for answer to complete...");
@@ -309,6 +352,7 @@ async function waitForAnswerComplete(baselineText, inputElement, maxWaitTime = 1
       now: Date.now(),
       hasStopButton: controlState.hasStopButton,
       hasSendButton: controlState.hasSendButton,
+      controlSignature: controlState.controlSignature,
       answerText: getLatestAssistantText()
     });
 
@@ -377,10 +421,11 @@ async function processQuestion(questionData) {
     await typeText(input, questionData.question);
 
     const previousAnswerText = getLatestAssistantText();
+    const baselineControlSignature = (await getSubmitControlState(input)).controlSignature;
     const sendMethod = await sendQuestion(input);
 
     console.log(`Question sent via ${sendMethod}, waiting for answer...`);
-    await waitForAnswerComplete(previousAnswerText, input);
+    await waitForAnswerComplete(previousAnswerText, input, baselineControlSignature);
 
     const answerText = await extractAnswerText();
     const screenshot = await requestScreenshot();
