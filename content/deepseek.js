@@ -1,4 +1,4 @@
-// DeepSeek automation content script
+﻿// DeepSeek automation content script
 
 console.log("GEO Testing: DeepSeek content script loaded");
 
@@ -109,27 +109,54 @@ async function locateInputBox() {
 
 async function locateSendButton(inputElement) {
   try {
-    return await locator.locate("sendButton");
-  } catch (primaryError) {
-    const localButton = inputElement && inputElement.parentElement
-      ? inputElement.parentElement.querySelector("button")
-      : null;
-    if (localButton && isElementVisible(localButton) && !localButton.disabled) {
-      return localButton;
+    const candidate = await locator.locate("sendButton");
+    if (candidate && isElementVisible(candidate) && !candidate.disabled && !isFullscreenControl(candidate)) {
+      return candidate;
     }
-
-    const fallbackButtons = Array.from(
-      document.querySelectorAll(
-        "button, [role='button'][aria-label], [data-testid*='send'], [class*='send']"
-      )
-    )
-      .filter((el) => isElementVisible(el) && !el.disabled);
-    if (fallbackButtons.length > 0) {
-      return fallbackButtons[fallbackButtons.length - 1];
-    }
-
-    throw primaryError;
+  } catch (error) {
+    // Fall through to robust heuristics below.
   }
+  const localButtons = inputElement && inputElement.parentElement
+    ? Array.from(inputElement.parentElement.querySelectorAll("button, [role='button']"))
+    : [];
+  const localSend = localButtons.filter((el) =>
+    isElementVisible(el) &&
+    !el.disabled &&
+    !isFullscreenControl(el) &&
+    isSendControl(el)
+  );
+  if (localSend.length > 0) {
+    return localSend[localSend.length - 1];
+  }
+  if (inputElement && typeof inputElement.closest === "function") {
+    const form = inputElement.closest("form");
+    if (form) {
+      const formButtons = Array.from(form.querySelectorAll("button, [role='button']"))
+        .filter((el) =>
+          isElementVisible(el) &&
+          !el.disabled &&
+          !isFullscreenControl(el) &&
+          isSendControl(el)
+        );
+      if (formButtons.length > 0) {
+        return formButtons[formButtons.length - 1];
+      }
+    }
+  }
+  const fallbackButtons = Array.from(
+    document.querySelectorAll(
+      "button, [role='button'][aria-label], [data-testid*='send'], [class*='send']"
+    )
+  ).filter((el) =>
+    isElementVisible(el) &&
+    !el.disabled &&
+    !isFullscreenControl(el) &&
+    isSendControl(el)
+  );
+  if (fallbackButtons.length > 0) {
+    return fallbackButtons[fallbackButtons.length - 1];
+  }
+  throw new Error("No valid send button found");
 }
 
 function submitByKeyboard(inputElement, ctrlKey) {
@@ -185,22 +212,8 @@ async function sendQuestion(inputElement) {
 }
 
 function getLatestAssistantText() {
-  const containers = document.querySelectorAll("[role='article'], .message-content");
-  if (containers.length === 0) {
-    return "";
-  }
-
-  const assistantMessages = Array.from(containers).filter((el) => {
-    return !el.classList.contains("user-message") &&
-      !el.querySelector("[data-role='user']");
-  });
-
-  if (assistantMessages.length === 0) {
-    return "";
-  }
-
-  const lastMessage = assistantMessages[assistantMessages.length - 1];
-  return lastMessage.innerText || lastMessage.textContent || "";
+  const text = extractLatestAssistantTextFromDom();
+  return text || "";
 }
 
 function getStreamingFingerprint() {
@@ -234,12 +247,16 @@ function getButtonHintText(button) {
 
 function isStopControl(button) {
   const hint = getButtonHintText(button);
-  return /(stop|停止|中止|interrupt|cancel generation)/i.test(hint);
+  return /(stop|鍋滄|涓|interrupt|cancel generation)/i.test(hint);
+}
+function isFullscreenControl(button) {
+  const hint = getButtonHintText(button);
+  return /(full[\s-]?screen|exit full|enter full|\u5168\u5c4f|\u9000\u51fa\u5168\u5c4f|image viewer|lightbox)/i.test(hint);
 }
 
 function isSendControl(button) {
   const hint = getButtonHintText(button);
-  if (/(send|发送|submit|arrow-up|up)/i.test(hint)) {
+  if (/(send|鍙戦€亅submit|arrow-up|up)/i.test(hint)) {
     return true;
   }
   return button.type === "submit";
@@ -363,6 +380,92 @@ async function ensureWebSearchEnabled() {
     // Continue anyway - might be enabled by default.
   }
 }
+function normalizeForCompare(value) {
+  return (value || "").replace(/\s+/g, " ").trim();
+}
+
+function isComposerArea(element) {
+  if (!element || !element.closest) return false;
+  return !!(
+    element.closest("form textarea") ||
+    element.closest("[contenteditable='true']") ||
+    element.closest("[role='textbox']") ||
+    element.closest("[class*='input']") ||
+    element.closest("[class*='composer']")
+  );
+}
+
+function isLikelyUserMessage(element) {
+  if (!element) return false;
+
+  const attrs = [
+    element.getAttribute("data-role") || "",
+    element.getAttribute("data-message-author-role") || "",
+    element.getAttribute("aria-label") || "",
+    element.className || ""
+  ].join(" ").toLowerCase();
+
+  return /user|human|\u7528\u6237/.test(attrs);
+}
+
+function extractLatestAssistantTextFromDom() {
+  const selectors = [
+    "[data-message-author-role='assistant']",
+    "[role='article']",
+    ".message-content",
+    ".ds-markdown",
+    ".markdown",
+    "[class*='assistant']",
+    "[class*='answer']"
+  ];
+
+  const candidates = [];
+  for (const selector of selectors) {
+    const matched = Array.from(document.querySelectorAll(selector));
+    for (const node of matched) {
+      if (!node || !isElementVisible(node)) continue;
+      if (isComposerArea(node)) continue;
+      if (isLikelyUserMessage(node)) continue;
+
+      const text = normalizeForCompare(node.innerText || node.textContent || "");
+      if (!text) continue;
+      candidates.push({ node, text });
+    }
+  }
+
+  if (candidates.length === 0) {
+    return "";
+  }
+
+  return candidates[candidates.length - 1].text;
+}
+async function dismissImageFullscreen() {
+  let changed = false;
+  if (document.fullscreenElement && document.exitFullscreen) {
+    try {
+      await document.exitFullscreen();
+      changed = true;
+    } catch (error) {
+      // Ignore and continue best-effort close.
+    }
+  }
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  document.dispatchEvent(new KeyboardEvent("keyup", { key: "Escape", bubbles: true }));
+  const candidates = Array.from(
+    document.querySelectorAll("button, [role='button'], [aria-label], [title]")
+  ).filter((el) => isElementVisible(el) && !el.disabled);
+  for (const button of candidates) {
+    if (!isFullscreenControl(button)) {
+      continue;
+    }
+    button.click();
+    changed = true;
+    await sleep(120);
+  }
+  if (changed) {
+    await sleep(350);
+  }
+}
 
 // Wait for answer to complete
 async function waitForAnswerComplete(
@@ -396,7 +499,7 @@ async function waitForAnswerComplete(
 
     if (state.isComplete) {
       console.log("Answer completed");
-      return true;
+      return state;
     }
 
     await sleep(800);
@@ -408,22 +511,7 @@ async function waitForAnswerComplete(
 // Extract answer text from last message
 async function extractAnswerText() {
   try {
-    const containers = document.querySelectorAll("[role='article'], .message-content");
-    if (containers.length === 0) {
-      throw new Error("No answer containers found");
-    }
-
-    const assistantMessages = Array.from(containers).filter((el) => {
-      return !el.classList.contains("user-message") &&
-        !el.querySelector("[data-role='user']");
-    });
-
-    if (assistantMessages.length === 0) {
-      throw new Error("No assistant messages found");
-    }
-
-    const lastMessage = assistantMessages[assistantMessages.length - 1];
-    return lastMessage.innerText || lastMessage.textContent || "";
+    return extractLatestAssistantTextFromDom();
   } catch (error) {
     console.error("Failed to extract answer:", error);
     return "";
@@ -432,14 +520,22 @@ async function extractAnswerText() {
 
 // Request screenshot from background script
 async function requestScreenshot() {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage(
-      { action: "captureScreenshot" },
-      (response) => {
-        resolve(response ? response.screenshot || null : null);
-      }
-    );
-  });
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await dismissImageFullscreen();
+    const screenshot = await new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        { action: "captureScreenshot" },
+        (response) => {
+          resolve(response ? response.screenshot || null : null);
+        }
+      );
+    });
+    if (screenshot) {
+      return screenshot;
+    }
+    await sleep(400 * attempt);
+  }
+  return null;
 }
 
 // Process a single question
@@ -453,20 +549,43 @@ async function processQuestion(questionData) {
 
   try {
     console.log("Processing question:", questionData.question);
+    await dismissImageFullscreen();
     await ensureWebSearchEnabled();
 
     const input = await locateInputBox();
     await typeText(input, questionData.question);
 
+    const previousAnswerText = getLatestAssistantText();
     const previousFingerprint = getStreamingFingerprint();
     const baselineControlSignature = (await getSubmitControlState(input)).controlSignature;
     const sendMethod = await sendQuestion(input);
 
     console.log(`Question sent via ${sendMethod}, waiting for answer...`);
-    await waitForAnswerComplete(previousFingerprint, input, baselineControlSignature);
+    const completionState = await waitForAnswerComplete(
+      previousFingerprint,
+      input,
+      baselineControlSignature
+    );
 
-    const answerText = await extractAnswerText();
+    await dismissImageFullscreen();
+    let answerText = await extractAnswerText();
     const screenshot = await requestScreenshot();
+    const normalizedPrevAnswer = normalizeForCompare(previousAnswerText);
+    const normalizedAnswer = normalizeForCompare(answerText);
+    const hasNewTextAnswer = !!normalizedAnswer && normalizedAnswer !== normalizedPrevAnswer;
+    const hasScreenshot = !!screenshot;
+    const sawStreamingChange = !!(completionState && completionState.observedNewAnswer);
+
+    if (!hasNewTextAnswer && sawStreamingChange) {
+      const fp = normalizeForCompare(getStreamingFingerprint());
+      if (fp && fp !== normalizeForCompare(previousFingerprint)) {
+        answerText = fp;
+      }
+    }
+
+    if (!hasNewTextAnswer && !hasScreenshot && !sawStreamingChange) {
+      throw new Error("No new assistant answer detected for current question");
+    }
 
     return {
       questionId: questionData.id,
@@ -509,3 +628,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 init().catch(() => {
   // Initialization errors are surfaced when processQuestion is invoked.
 });
+
+
+

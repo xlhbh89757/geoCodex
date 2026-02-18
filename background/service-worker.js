@@ -187,8 +187,13 @@ function analyzeAnswer(answerText) {
 
 async function captureScreenshot(tabId) {
   try {
-    // Capture visible tab
-    const dataUrl = await chrome.tabs.captureVisibleTab(null, {
+    let windowId = null;
+    if (tabId) {
+      const tab = await chrome.tabs.get(tabId);
+      windowId = tab.windowId;
+    }
+
+    const dataUrl = await chrome.tabs.captureVisibleTab(windowId, {
       format: "png",
       quality: 70
     });

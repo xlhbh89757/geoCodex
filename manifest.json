@@ -11,7 +11,8 @@
     "sidePanel"
   ],
   "host_permissions": [
-    "https://chat.deepseek.com/*"
+    "https://chat.deepseek.com/*",
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "background/service-worker.js"
