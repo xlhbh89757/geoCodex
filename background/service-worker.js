@@ -1,13 +1,27 @@
-// Background service worker for GEO testing assistant
+﻿// Background service worker for GEO testing assistant
 
 console.log("GEO Testing Assistant: Service worker initialized");
 
-const KEYWORDS = ["德科信息", "德科信息技术", "德科信息技术有限公司"];
-const CONTENT_SCRIPT_FILES = [
-  "shared/element-locator.js",
-  "shared/answer-completion.js",
-  "content/deepseek.js"
-];
+const DEFAULT_KEYWORDS = ["德科信息", "德科信息技术", "德科信息技术有限公司"];
+
+const PLATFORM_CONFIG = {
+  deepseek: {
+    url: "https://chat.deepseek.com",
+    contentScriptFiles: [
+      "shared/element-locator.js",
+      "shared/answer-completion.js",
+      "content/deepseek.js"
+    ]
+  },
+  doubao: {
+    url: "https://www.doubao.com/chat/",
+    contentScriptFiles: [
+      "shared/element-locator.js",
+      "shared/answer-completion.js",
+      "content/doubao.js"
+    ]
+  }
+};
 
 let currentSession = null;
 
@@ -55,16 +69,20 @@ async function handleMessage(message, sender) {
 
 async function startTest(data) {
   try {
-    const { questions, platform } = data;
+    const { questions, platform, keywords } = data;
     if (!Array.isArray(questions) || questions.length === 0) {
       throw new Error("No questions provided");
     }
+
+    const selectedPlatform = resolvePlatform(platform);
+    const selectedKeywords = await resolveKeywords(keywords);
 
     // Create new session
     currentSession = {
       id: `session_${Date.now()}`,
       status: "running",
-      platform,
+      platform: selectedPlatform,
+      keywords: selectedKeywords,
       startTime: Date.now(),
       progress: {
         total: questions.length,
@@ -78,9 +96,9 @@ async function startTest(data) {
     // Save to storage
     await chrome.storage.local.set({ currentSession });
 
-    const tabUrl = platform === "deepseek" ? "https://chat.deepseek.com" : "";
+    const tabUrl = getPlatformConfig(selectedPlatform).url;
     const tab = await getOrCreateTab(tabUrl);
-    await ensureTabAndContentReady(tab.id, tabUrl);
+    await ensureTabAndContentReady(tab.id, tabUrl, "", selectedPlatform);
 
     // Start processing questions
     processNextQuestion(tab.id);
@@ -89,6 +107,45 @@ async function startTest(data) {
   } catch (error) {
     return { success: false, error: error.message };
   }
+}
+
+function resolvePlatform(platform) {
+  if (platform && PLATFORM_CONFIG[platform]) {
+    return platform;
+  }
+  return "deepseek";
+}
+
+function getPlatformConfig(platform) {
+  const conf = PLATFORM_CONFIG[resolvePlatform(platform)];
+  if (!conf || !conf.url) {
+    throw new Error(`Unsupported platform: ${platform}`);
+  }
+  return conf;
+}
+
+function normalizeKeywords(keywords) {
+  if (!Array.isArray(keywords)) return [];
+
+  return keywords
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .filter((item, index, arr) => arr.indexOf(item) === index);
+}
+
+async function resolveKeywords(keywordsFromRequest) {
+  const fromRequest = normalizeKeywords(keywordsFromRequest);
+  if (fromRequest.length > 0) {
+    return fromRequest;
+  }
+
+  const stored = await chrome.storage.local.get("keywordConfig");
+  const fromStorage = normalizeKeywords(stored.keywordConfig);
+  if (fromStorage.length > 0) {
+    return fromStorage;
+  }
+
+  return DEFAULT_KEYWORDS.slice();
 }
 
 // Get or create tab for platform
@@ -128,8 +185,8 @@ async function processNextQuestion(tabId) {
 
   try {
     const tab = await chrome.tabs.get(tabId);
-    const expectedUrl = currentSession.platform === "deepseek" ? "https://chat.deepseek.com" : "";
-    await ensureTabAndContentReady(tabId, expectedUrl, tab.url);
+    const expectedUrl = getPlatformConfig(currentSession.platform).url;
+    await ensureTabAndContentReady(tabId, expectedUrl, tab.url, currentSession.platform);
 
     notifySidepanel({
       action: "questionStarted",
@@ -144,7 +201,7 @@ async function processNextQuestion(tabId) {
     });
 
     if (response && response.success) {
-      const analysis = analyzeAnswer(response.result.answer);
+      const analysis = analyzeAnswer(response.result.answer, currentSession.keywords);
       const result = {
         ...response.result,
         isHit: analysis.isHit,
@@ -172,9 +229,12 @@ async function processNextQuestion(tabId) {
 }
 
 // Analyze answer for keywords
-function analyzeAnswer(answerText) {
+function analyzeAnswer(answerText, keywords) {
+  const activeKeywords = normalizeKeywords(keywords).length > 0
+    ? normalizeKeywords(keywords)
+    : DEFAULT_KEYWORDS;
   const normalizedText = (answerText || "").replace(/\s+/g, "").toLowerCase();
-  const matchedKeywords = KEYWORDS.filter((keyword) => {
+  const matchedKeywords = activeKeywords.filter((keyword) => {
     const normalizedKeyword = keyword.replace(/\s+/g, "").toLowerCase();
     return normalizedText.includes(normalizedKeyword);
   });
@@ -221,10 +281,10 @@ async function resumeTest() {
     currentSession.status = "running";
     await chrome.storage.local.set({ currentSession });
 
-    const platform = currentSession.platform;
-    const tabUrl = platform === "deepseek" ? "https://chat.deepseek.com" : "";
+    const platform = resolvePlatform(currentSession.platform);
+    const tabUrl = getPlatformConfig(platform).url;
     const tab = await getOrCreateTab(tabUrl);
-    await ensureTabAndContentReady(tab.id, tabUrl);
+    await ensureTabAndContentReady(tab.id, tabUrl, "", platform);
 
     processNextQuestion(tab.id);
     notifySidepanel({ action: "testResumed" });
@@ -289,9 +349,9 @@ function notifySidepanel(message) {
   });
 }
 
-async function ensureTabAndContentReady(tabId, expectedUrl, currentTabUrl = "") {
+async function ensureTabAndContentReady(tabId, expectedUrl, currentTabUrl = "", platform = "deepseek") {
   await waitForTabComplete(tabId, expectedUrl, currentTabUrl);
-  await waitForContentScript(tabId);
+  await waitForContentScript(tabId, platform);
 }
 
 async function waitForTabComplete(tabId, expectedUrl, currentTabUrl = "", timeoutMs = 30000) {
@@ -313,7 +373,7 @@ async function waitForTabComplete(tabId, expectedUrl, currentTabUrl = "", timeou
   throw new Error(`Target tab not ready within ${timeoutMs / 1000}s`);
 }
 
-async function waitForContentScript(tabId, timeoutMs = 30000) {
+async function waitForContentScript(tabId, platform, timeoutMs = 30000) {
   const start = Date.now();
   let injected = false;
 
@@ -329,7 +389,7 @@ async function waitForContentScript(tabId, timeoutMs = 30000) {
         // Content scripts are not always present on already-open tabs after extension reload.
         // Try one explicit runtime injection, then continue retry loop.
         if (!injected) {
-          await tryInjectContentScripts(tabId);
+          await tryInjectContentScripts(tabId, platform);
           injected = true;
         }
       } else {
@@ -347,11 +407,12 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function tryInjectContentScripts(tabId) {
+async function tryInjectContentScripts(tabId, platform) {
   try {
+    const files = getPlatformConfig(platform).contentScriptFiles;
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: CONTENT_SCRIPT_FILES
+      files
     });
   } catch (error) {
     console.warn("Content script injection attempt failed:", error);

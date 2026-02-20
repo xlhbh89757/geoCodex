@@ -2,6 +2,10 @@
 const elements = {
   fileInput: document.getElementById("fileInput"),
   fileInfo: document.getElementById("fileInfo"),
+  platformSelect: document.getElementById("platformSelect"),
+  keywordsInput: document.getElementById("keywordsInput"),
+  saveKeywordsBtn: document.getElementById("saveKeywordsBtn"),
+  keywordsStatus: document.getElementById("keywordsStatus"),
   startBtn: document.getElementById("startBtn"),
   pauseBtn: document.getElementById("pauseBtn"),
   progressSection: document.getElementById("progressSection"),
@@ -14,6 +18,9 @@ const elements = {
   reportRoot: document.getElementById("reportRoot")
 };
 
+const DEFAULT_KEYWORDS = ["德科信息", "德科信息技术", "德科信息技术有限公司"];
+const KEYWORD_CONFIG_KEY = "keywordConfig";
+
 let currentQuestions = null;
 let isPaused = false;
 let reportState = {
@@ -24,6 +31,9 @@ let reportState = {
 
 // File upload handler
 elements.fileInput.addEventListener("change", handleFileUpload);
+if (elements.saveKeywordsBtn) {
+  elements.saveKeywordsBtn.addEventListener("click", saveKeywordConfig);
+}
 
 async function handleFileUpload(event) {
   const file = event.target.files[0];
@@ -52,6 +62,57 @@ async function handleFileUpload(event) {
   }
 }
 
+function parseKeywords(inputText) {
+  if (!inputText) return [];
+
+  const normalized = String(inputText)
+    .replaceAll("，", ",")
+    .split(/\r?\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return normalized.filter((item, index) => normalized.indexOf(item) === index);
+}
+
+function setKeywordStatus(text, isError = false) {
+  if (!elements.keywordsStatus) return;
+  elements.keywordsStatus.textContent = text || "";
+  elements.keywordsStatus.style.color = isError ? "#c62828" : "#666";
+}
+
+function renderKeywords(keywords) {
+  if (!elements.keywordsInput) return;
+  const list = Array.isArray(keywords) && keywords.length > 0 ? keywords : DEFAULT_KEYWORDS;
+  elements.keywordsInput.value = list.join("\n");
+}
+
+async function loadKeywordConfig() {
+  try {
+    const result = await chrome.storage.local.get(KEYWORD_CONFIG_KEY);
+    const keywords = Array.isArray(result[KEYWORD_CONFIG_KEY]) ? result[KEYWORD_CONFIG_KEY] : [];
+    renderKeywords(keywords);
+    setKeywordStatus("");
+  } catch (error) {
+    renderKeywords(DEFAULT_KEYWORDS);
+    setKeywordStatus(`读取关键词失败：${error.message}`, true);
+  }
+}
+
+async function saveKeywordConfig() {
+  try {
+    const keywords = parseKeywords(elements.keywordsInput ? elements.keywordsInput.value : "");
+    if (keywords.length === 0) {
+      throw new Error("至少保留一个关键词");
+    }
+
+    await chrome.storage.local.set({ [KEYWORD_CONFIG_KEY]: keywords });
+    renderKeywords(keywords);
+    setKeywordStatus(`已保存 ${keywords.length} 个关键词`);
+  } catch (error) {
+    setKeywordStatus(`保存失败：${error.message}`, true);
+  }
+}
+
 // Start test button handler
 elements.startBtn.addEventListener("click", async () => {
   if (!currentQuestions || currentQuestions.length === 0) {
@@ -64,7 +125,8 @@ elements.startBtn.addEventListener("click", async () => {
       action: "startTest",
       data: {
         questions: currentQuestions,
-        platform: "deepseek"
+        platform: elements.platformSelect ? elements.platformSelect.value : "deepseek",
+        keywords: parseKeywords(elements.keywordsInput ? elements.keywordsInput.value : "")
       }
     });
 
@@ -607,4 +669,5 @@ window.closeModal = closeModal;
 
 // Initialize history on startup
 loadHistory();
+loadKeywordConfig();
 console.log("Sidepanel initialized");

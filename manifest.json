@@ -12,6 +12,8 @@
   ],
   "host_permissions": [
     "https://chat.deepseek.com/*",
+    "https://www.doubao.com/*",
+    "https://doubao.com/*",
     "<all_urls>"
   ],
   "background": {
@@ -26,6 +28,18 @@
         "shared/element-locator.js",
         "shared/answer-completion.js",
         "content/deepseek.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.doubao.com/*",
+        "https://doubao.com/*"
+      ],
+      "js": [
+        "shared/element-locator.js",
+        "shared/answer-completion.js",
+        "content/doubao.js"
       ],
       "run_at": "document_idle"
     }
@@ -47,7 +61,9 @@
         "config/selectors.json"
       ],
       "matches": [
-        "https://chat.deepseek.com/*"
+        "https://chat.deepseek.com/*",
+        "https://www.doubao.com/*",
+        "https://doubao.com/*"
       ]
     }
   ]

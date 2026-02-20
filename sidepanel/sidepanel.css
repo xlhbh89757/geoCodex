@@ -100,6 +100,33 @@ section {
   margin-bottom: 8px;
 }
 
+.config-item-column {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.keywords-input {
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.keywords-status {
+  color: #666;
+  font-size: 12px;
+}
+
 .current-question {
   font-style: italic;
   color: #666;

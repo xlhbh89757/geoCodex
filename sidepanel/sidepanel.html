@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -24,11 +24,21 @@
         <label for="platformSelect">平台:</label>
         <select id="platformSelect">
           <option value="deepseek">DeepSeek</option>
+          <option value="doubao">豆包</option>
         </select>
       </div>
-      <div class="config-item">
-        <label>关键词:</label>
-        <span>德科信息, 德科信息技术, 德科信息技术有限公司</span>
+      <div class="config-item config-item-column">
+        <label for="keywordsInput">关键词（每行一个，或用英文逗号分隔）</label>
+        <textarea
+          id="keywordsInput"
+          class="keywords-input"
+          rows="4"
+          placeholder="德科信息&#10;德科信息技术&#10;德科信息技术有限公司"
+        ></textarea>
+        <div class="inline-actions">
+          <button id="saveKeywordsBtn" class="btn btn-secondary" type="button">保存关键词</button>
+          <span id="keywordsStatus" class="keywords-status"></span>
+        </div>
       </div>
     </section>
 

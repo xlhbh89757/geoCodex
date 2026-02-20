@@ -1,10 +1,10 @@
 // Keyword analyzer for GEO testing
 
-const KEYWORDS = ["德科信息", "德科信息技术", "德科信息技术有限公司"];
+const DEFAULT_KEYWORDS = ["德科信息", "德科信息技术", "德科信息技术有限公司"];
 
 const Analyzer = {
   // Analyze answer for keyword hits
-  analyze(answerText) {
+  analyze(answerText, keywords = DEFAULT_KEYWORDS) {
     if (!answerText) {
       return {
         isHit: false,
@@ -16,7 +16,11 @@ const Analyzer = {
     const normalizedText = answerText.replace(/\s+/g, "").toLowerCase();
 
     // Check each keyword
-    const matchedKeywords = KEYWORDS.filter((keyword) => {
+    const activeKeywords = Array.isArray(keywords) && keywords.length > 0
+      ? keywords
+      : DEFAULT_KEYWORDS;
+
+    const matchedKeywords = activeKeywords.filter((keyword) => {
       const normalizedKeyword = keyword.replace(/\s+/g, "").toLowerCase();
       return normalizedText.includes(normalizedKeyword);
     });

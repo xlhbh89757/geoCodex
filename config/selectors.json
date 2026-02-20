@@ -95,5 +95,142 @@
         "priority": 2
       }
     ]
+  },
+  "doubao": {
+    "inputBox": [
+      {
+        "type": "css",
+        "value": "textarea[data-testid='chat_input_input']",
+        "priority": 1
+      },
+      {
+        "type": "css",
+        "value": "#chat-route-layout textarea.textarea-BnKyIt",
+        "priority": 2
+      },
+      {
+        "type": "css",
+        "value": "#chat-route-layout textarea",
+        "priority": 3
+      },
+      {
+        "type": "css",
+        "value": "[contenteditable='true'][role='textbox']",
+        "priority": 4
+      },
+      {
+        "type": "xpath",
+        "value": "//textarea[@role='textbox' or @aria-label]",
+        "priority": 5
+      }
+    ],
+    "sendButton": [
+      {
+        "type": "css",
+        "value": "[data-testid='chat_input_send_button']",
+        "priority": 1
+      },
+      {
+        "type": "css",
+        "value": "#chat-route-layout div.send-btn-wrapper.group",
+        "priority": 2
+      },
+      {
+        "type": "css",
+        "value": "#chat-route-layout .send-btn-wrapper",
+        "priority": 3
+      },
+      {
+        "type": "css",
+        "value": "button[type='submit']",
+        "priority": 4
+      },
+      {
+        "type": "css",
+        "value": "button[aria-label*='发送']",
+        "priority": 5
+      },
+      {
+        "type": "css",
+        "value": "button[aria-label*='Send']",
+        "priority": 6
+      },
+      {
+        "type": "xpath",
+        "value": "//button[contains(., '发送') or contains(., 'Send') or contains(., 'send')]",
+        "priority": 7
+      }
+    ],
+    "webSearchToggle": [
+      {
+        "type": "css",
+        "value": "[data-feature='web-search']",
+        "priority": 1
+      },
+      {
+        "type": "css",
+        "value": "button[aria-label*='联网']",
+        "priority": 2
+      },
+      {
+        "type": "css",
+        "value": "button[aria-label*='Search']",
+        "priority": 3
+      }
+    ],
+    "answerContainer": [
+      {
+        "type": "css",
+        "value": "div[data-testid='message_text_content']",
+        "priority": 1
+      },
+      {
+        "type": "css",
+        "value": "[role='article']",
+        "priority": 2
+      },
+      {
+        "type": "css",
+        "value": ".message-content",
+        "priority": 3
+      },
+      {
+        "type": "css",
+        "value": ".markdown",
+        "priority": 4
+      }
+    ],
+    "stopButton": [
+      {
+        "type": "css",
+        "value": "[data-testid='chat_input_local_break_button']",
+        "priority": 1
+      },
+      {
+        "type": "css",
+        "value": "#chat-route-layout .break-btn-fISNgC",
+        "priority": 2
+      },
+      {
+        "type": "css",
+        "value": ".break-btn-fISNgC",
+        "priority": 3
+      },
+      {
+        "type": "css",
+        "value": "button[aria-label*='停止']",
+        "priority": 4
+      },
+      {
+        "type": "css",
+        "value": "button[aria-label*='Stop']",
+        "priority": 5
+      },
+      {
+        "type": "xpath",
+        "value": "//button[contains(., '停止') or contains(., 'Stop')]",
+        "priority": 6
+      }
+    ]
   }
 }

@@ -1,6 +1,6 @@
-﻿// DeepSeek automation content script
+﻿// Doubao automation content script
 
-console.log("GEO Testing: DeepSeek content script loaded");
+console.log("GEO Testing: Doubao content script loaded");
 
 let locator;
 let isProcessing = false;
@@ -14,8 +14,8 @@ async function init() {
     try {
       const response = await fetch(chrome.runtime.getURL("config/selectors.json"));
       const selectors = await response.json();
-      locator = new ElementLocator("deepseek", selectors);
-      console.log("DeepSeek locator initialized");
+      locator = new ElementLocator("doubao", selectors);
+      console.log("Doubao locator initialized");
     } catch (error) {
       console.error("Failed to initialize locator:", error);
       throw error;
@@ -145,7 +145,7 @@ async function locateSendButton(inputElement) {
   }
   const fallbackButtons = Array.from(
     document.querySelectorAll(
-      "button, [role='button'][aria-label], [data-testid*='send'], [class*='send']"
+      "button, [role='button'][aria-label], [data-testid*='send'], [class*='send'], [class*='send-btn-wrapper']"
     )
   ).filter((el) =>
     isElementVisible(el) &&
@@ -217,7 +217,9 @@ function getLatestAssistantText() {
 }
 
 function getStreamingFingerprint() {
-  const containers = Array.from(document.querySelectorAll("[role='article'], .message-content"));
+  const containers = Array.from(
+    document.querySelectorAll("div[data-testid='message_text_content'], [role='article'], .message-content")
+  );
 
   if (containers.length > 0) {
     const tailTexts = containers
@@ -235,7 +237,9 @@ function getStreamingFingerprint() {
 }
 
 function getButtonHintText(button) {
+  const testId = button.getAttribute("data-testid") || "";
   const parts = [
+    testId,
     button.getAttribute("aria-label") || "",
     button.getAttribute("title") || "",
     button.getAttribute("data-testid") || "",
@@ -247,6 +251,14 @@ function getButtonHintText(button) {
 
 function isStopControl(button) {
   const hint = getButtonHintText(button);
+  const testId = String(button && button.getAttribute ? button.getAttribute("data-testid") || "" : "");
+  if (testId === "chat_input_local_break_button") {
+    return true;
+  }
+  const className = String(button && button.className ? button.className : "");
+  if (className.includes("break-btn-fISNgC")) {
+    return true;
+  }
   return /(stop|停止|中止|interrupt|cancel generation)/i.test(hint);
 }
 function isFullscreenControl(button) {
@@ -256,6 +268,14 @@ function isFullscreenControl(button) {
 
 function isSendControl(button) {
   const hint = getButtonHintText(button);
+  const testId = String(button && button.getAttribute ? button.getAttribute("data-testid") || "" : "");
+  if (testId === "chat_input_send_button") {
+    return true;
+  }
+  const className = String(button && button.className ? button.className : "");
+  if (className.includes("send-btn-wrapper")) {
+    return true;
+  }
   if (/(send|发送|submit|arrow-up|up)/i.test(hint)) {
     return true;
   }
@@ -264,7 +284,9 @@ function isSendControl(button) {
 
 function collectVisibleButtons(scopeRoot) {
   const elements = Array.from(
-    scopeRoot.querySelectorAll("button, [role='button'][aria-label], [data-testid*='send']")
+    scopeRoot.querySelectorAll(
+      "button, [role='button'][aria-label], [data-testid='chat_input_send_button'], [data-testid='chat_input_local_break_button'], [data-testid*='send'], [class*='send-btn-wrapper'], [class*='break-btn']"
+    )
   );
   return elements.filter((el) => isElementVisible(el));
 }
@@ -410,6 +432,7 @@ function isLikelyUserMessage(element) {
 
 function extractLatestAssistantTextFromDom() {
   const selectors = [
+    "div[data-testid='message_text_content']",
     "[data-message-author-role='assistant']",
     "[role='article']",
     ".message-content",
@@ -628,6 +651,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 init().catch(() => {
   // Initialization errors are surfaced when processQuestion is invoked.
 });
+
 
 
 
