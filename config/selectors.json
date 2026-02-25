@@ -232,5 +232,96 @@
         "priority": 6
       }
     ]
+  },
+  "yuanbao": {
+    "inputBox": [
+      {
+        "type": "css",
+        "value": "div.ql-editor[contenteditable='true'][data-placeholder*='有问题']",
+        "priority": 1
+      },
+      {
+        "type": "css",
+        "value": "div.ql-editor[contenteditable='true'][enterkeyhint='send']",
+        "priority": 2
+      },
+      {
+        "type": "css",
+        "value": "#searchbar-editor > div.style__text-area__wrapper___v8PgB > div.style__text-area__start___B3hfY.style__text-area__start--placeholder___TuTF8.style__tooltipLiteBox___GYilv > div > div",
+        "priority": 3
+      },
+      {
+        "type": "css",
+        "value": "#searchbar-editor textarea",
+        "priority": 4
+      },
+      {
+        "type": "css",
+        "value": "#searchbar-editor [contenteditable='true']",
+        "priority": 5
+      },
+      {
+        "type": "xpath",
+        "value": "//div[@id='searchbar-editor']//textarea | //div[@id='searchbar-editor']//*[@contenteditable='true']",
+        "priority": 6
+      }
+    ],
+    "sendButton": [
+      {
+        "type": "css",
+        "value": "#yuanbao-send-btn",
+        "priority": 1
+      },
+      {
+        "type": "css",
+        "value": "#searchbar-editor button[type='submit']",
+        "priority": 2
+      },
+      {
+        "type": "css",
+        "value": "#searchbar-editor [role='button']",
+        "priority": 3
+      },
+      {
+        "type": "xpath",
+        "value": "//button[@id='yuanbao-send-btn' or contains(., '发送') or contains(., 'Send')]",
+        "priority": 4
+      }
+    ],
+    "webSearchToggle": [],
+    "answerContainer": [
+      {
+        "type": "css",
+        "value": "#chat-content > div > div.agent-chat__list__content-wrapper > div.agent-chat__list__content > div.agent-chat__list__item.agent-chat__list__item--ai.agent-chat__list__item--last > div > div.agent-chat__bubble.agent-chat__bubble--ai.agent-chat__conv--ai--multiple > div > div.agent-chat__conv--ai__speech_show > div:nth-child(2) > div",
+        "priority": 1
+      },
+      {
+        "type": "css",
+        "value": "#chat-content .agent-chat__list__item--ai.agent-chat__list__item--last .agent-chat__conv--ai__speech_show div:nth-child(2) > div",
+        "priority": 2
+      },
+      {
+        "type": "css",
+        "value": "#chat-content .agent-chat__list__item--ai.agent-chat__list__item--last",
+        "priority": 3
+      }
+    ],
+    "stopButton": [
+      {
+        "type": "css",
+        "value": "#searchbar-editor > div.style__text-area__wrapper___v8PgB > div.style__text-area__end___ow95N > div:nth-child(2) > div > a",
+        "priority": 1
+      },
+      {
+        "type": "css",
+        "value": "#searchbar-editor .style__text-area__end___ow95N a",
+        "priority": 2
+      },
+      {
+        "type": "xpath",
+        "value": "//div[@id='searchbar-editor']//a[contains(@class, 'break') or contains(., '停止') or contains(., 'Stop')]",
+        "priority": 3
+      }
+    ]
   }
 }

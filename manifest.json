@@ -14,6 +14,7 @@
     "https://chat.deepseek.com/*",
     "https://www.doubao.com/*",
     "https://doubao.com/*",
+    "https://yuanbao.tencent.com/*",
     "<all_urls>"
   ],
   "background": {
@@ -42,6 +43,17 @@
         "content/doubao.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://yuanbao.tencent.com/*"
+      ],
+      "js": [
+        "shared/element-locator.js",
+        "shared/answer-completion.js",
+        "content/yuanbao.js"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "side_panel": {
@@ -63,7 +75,8 @@
       "matches": [
         "https://chat.deepseek.com/*",
         "https://www.doubao.com/*",
-        "https://doubao.com/*"
+        "https://doubao.com/*",
+        "https://yuanbao.tencent.com/*"
       ]
     }
   ]

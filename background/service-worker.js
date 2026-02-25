@@ -20,6 +20,14 @@ const PLATFORM_CONFIG = {
       "shared/answer-completion.js",
       "content/doubao.js"
     ]
+  },
+  yuanbao: {
+    url: "https://yuanbao.tencent.com/",
+    contentScriptFiles: [
+      "shared/element-locator.js",
+      "shared/answer-completion.js",
+      "content/yuanbao.js"
+    ]
   }
 };
 
