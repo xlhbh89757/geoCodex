@@ -4,6 +4,13 @@ console.log("GEO Testing: Yuanbao content script loaded");
 
 const YUANBAO_ANSWER_SELECTOR = "#chat-content > div > div.agent-chat__list__content-wrapper > div.agent-chat__list__content > div.agent-chat__list__item.agent-chat__list__item--ai.agent-chat__list__item--last > div > div.agent-chat__bubble.agent-chat__bubble--ai.agent-chat__conv--ai--multiple > div > div.agent-chat__conv--ai__speech_show > div:nth-child(2) > div";
 const YUANBAO_STOP_SELECTOR = "#searchbar-editor > div.style__text-area__wrapper___v8PgB > div.style__text-area__end___ow95N > div:nth-child(2) > div > a";
+const YUANBAO_PRIMARY_ANSWER_SELECTORS = [
+  "#chat-content .agent-chat__speech-text--box-left .hyc-content-md-done",
+  "#chat-content .agent-chat__speech-text--box-left .hyc-content-md",
+  "#chat-content .agent-chat__speech-text--box-left .hyc-common-markdown",
+  "#chat-content .agent-chat__speech-text--box-left .agent-chat__speech-card__text",
+  "#chat-content .agent-chat__speech-text--box-left"
+].join(", ");
 
 let locator;
 let isProcessing = false;
@@ -220,18 +227,13 @@ function getLatestAssistantText() {
 }
 
 function getStreamingFingerprint() {
-  const containers = Array.from(
-    document.querySelectorAll(`${YUANBAO_ANSWER_SELECTOR}, [role='article'], .message-content, .markdown`)
-  );
-
-  if (containers.length > 0) {
-    const tailTexts = containers
+  const candidates = collectAssistantAnswerCandidates();
+  if (candidates.length > 0) {
+    return candidates
       .slice(-4)
-      .map((el) => (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim())
-      .filter(Boolean);
-    if (tailTexts.length > 0) {
-      return tailTexts.join(" || ");
-    }
+      .map((item) => item.text)
+      .filter(Boolean)
+      .join(" || ");
   }
 
   // Fallback: use body tail text to detect streaming changes.
@@ -253,19 +255,23 @@ function getButtonHintText(button) {
 }
 
 function isStopControl(button) {
+  if (!button) return false;
   const hint = getButtonHintText(button);
-  const testId = String(button && button.getAttribute ? button.getAttribute("data-testid") || "" : "");
+  const testId = String(button.getAttribute ? button.getAttribute("data-testid") || "" : "").toLowerCase();
   if (testId === "chat_input_local_break_button") {
     return true;
   }
-  if (button && typeof button.matches === "function" && button.matches(YUANBAO_STOP_SELECTOR)) {
+  if (typeof button.matches === "function" && button.matches(YUANBAO_STOP_SELECTOR)) {
     return true;
   }
-  const className = String(button && button.className ? button.className : "");
-  if (className.includes("break-btn-fISNgC")) {
+  const className = String(button.className || "").toLowerCase();
+  if (className.includes("break-btn-fisngc")) {
     return true;
   }
-  return /(stop|停止|中止|interrupt|cancel generation)/i.test(hint);
+  if (testId.includes("break") || className.includes("break")) {
+    return true;
+  }
+  return /(stop|停止|中止|interrupt|cancel generation)/i.test(hint) && !isSendControl(button);
 }
 function isFullscreenControl(button) {
   const hint = getButtonHintText(button);
@@ -294,7 +300,7 @@ function isSendControl(button) {
 function collectVisibleButtons(scopeRoot) {
   const elements = Array.from(
     scopeRoot.querySelectorAll(
-      "button, a, [role='button'][aria-label], #yuanbao-send-btn, [data-testid='chat_input_send_button'], [data-testid='chat_input_local_break_button'], [data-testid*='send'], [class*='send-btn-wrapper'], [class*='break-btn']"
+      "button, #searchbar-editor a, [role='button'][aria-label], #yuanbao-send-btn, [data-testid='chat_input_send_button'], [data-testid='chat_input_local_break_button'], [data-testid*='send'], [class*='send-btn-wrapper'], [class*='break-btn']"
     )
   );
   return elements.filter((el) => isElementVisible(el));
@@ -356,7 +362,7 @@ async function getSubmitControlState(inputElement) {
 
   try {
     const stopBtn = await locator.locate("stopButton", 200);
-    hasStopButton = !!(stopBtn && locator.isVisible(stopBtn));
+    hasStopButton = !!(stopBtn && locator.isVisible(stopBtn) && isStopControl(stopBtn));
   } catch (error) {
     hasStopButton = false;
   }
@@ -415,6 +421,58 @@ function normalizeForCompare(value) {
   return (value || "").replace(/\s+/g, " ").trim();
 }
 
+function collectAssistantAnswerCandidates() {
+  const selectors = [
+    YUANBAO_PRIMARY_ANSWER_SELECTORS,
+    YUANBAO_ANSWER_SELECTOR,
+    "div[data-testid='message_text_content']",
+    "[data-message-author-role='assistant']",
+    "[role='article']",
+    ".message-content",
+    ".ds-markdown",
+    ".markdown",
+    "[class*='assistant']",
+    "[class*='answer']"
+  ];
+  const seen = new Set();
+  const candidates = [];
+
+  for (const selector of selectors) {
+    const matched = Array.from(document.querySelectorAll(selector));
+    for (const node of matched) {
+      if (!node || !isElementVisible(node)) continue;
+      if (isComposerArea(node)) continue;
+      if (isLikelyUserMessage(node)) continue;
+
+      const text = normalizeForCompare(node.innerText || node.textContent || "");
+      if (!text) continue;
+      if (seen.has(node)) continue;
+
+      seen.add(node);
+      candidates.push({ node, text });
+    }
+  }
+
+  return candidates;
+}
+
+function getAssistantAnswerSnapshot() {
+  const candidates = collectAssistantAnswerCandidates();
+  const count = candidates.length;
+  const lastText = count > 0 ? candidates[count - 1].text : "";
+  const fingerprint = candidates
+    .slice(-4)
+    .map((item) => item.text)
+    .filter(Boolean)
+    .join(" || ");
+
+  return {
+    count,
+    lastText,
+    fingerprint
+  };
+}
+
 function isComposerArea(element) {
   if (!element || !element.closest) return false;
   return !!(
@@ -436,35 +494,11 @@ function isLikelyUserMessage(element) {
     element.className || ""
   ].join(" ").toLowerCase();
 
-  return /user|human|\u7528\u6237/.test(attrs);
+  return /user|human|\u7528\u6237|box-right|item--user/.test(attrs);
 }
 
 function extractLatestAssistantTextFromDom() {
-  const selectors = [
-    YUANBAO_ANSWER_SELECTOR,
-    "div[data-testid='message_text_content']",
-    "[data-message-author-role='assistant']",
-    "[role='article']",
-    ".message-content",
-    ".ds-markdown",
-    ".markdown",
-    "[class*='assistant']",
-    "[class*='answer']"
-  ];
-
-  const candidates = [];
-  for (const selector of selectors) {
-    const matched = Array.from(document.querySelectorAll(selector));
-    for (const node of matched) {
-      if (!node || !isElementVisible(node)) continue;
-      if (isComposerArea(node)) continue;
-      if (isLikelyUserMessage(node)) continue;
-
-      const text = normalizeForCompare(node.innerText || node.textContent || "");
-      if (!text) continue;
-      candidates.push({ node, text });
-    }
-  }
+  const candidates = collectAssistantAnswerCandidates();
 
   if (candidates.length === 0) {
     return "";
@@ -505,34 +539,60 @@ async function waitForAnswerComplete(
   baselineFingerprint,
   inputElement,
   baselineControlSignature,
+  baselineAnswerSnapshot,
   maxWaitTime = 120000
 ) {
   const startTime = Date.now();
+  const baseSnapshot = baselineAnswerSnapshot || { count: 0, lastText: "", fingerprint: "" };
   const tracker = createAnswerCompletionTracker({
     baselineText: baselineFingerprint,
     baselineControlSignature,
-    minObserveMs: 2500,
-    minStableMs: 1800,
-    minNoStopAfterSeenMs: 900,
-    minStableAfterStopMs: 500,
-    minControlReturnMs: 600,
-    hardFallbackMs: 30000
+    minObserveMs: 7000,
+    minStableMs: 3500,
+    minNoStopAfterSeenMs: 1500,
+    minStableAfterStopMs: 1200,
+    minControlReturnMs: 1200,
+    hardFallbackMs: 90000
   });
   console.log("Waiting for answer to complete...");
 
   while (Date.now() - startTime < maxWaitTime) {
+    const currentSnapshot = getAssistantAnswerSnapshot();
+    const answerNodeIncreased = currentSnapshot.count > baseSnapshot.count;
+    const lastAnswerChanged = !!currentSnapshot.lastText &&
+      currentSnapshot.lastText !== baseSnapshot.lastText;
+    const answerLengthIncreased = currentSnapshot.lastText.length > (baseSnapshot.lastText.length + 16);
     const controlState = await getSubmitControlState(inputElement);
     const state = tracker.update({
       now: Date.now(),
       hasStopButton: controlState.hasStopButton,
       hasSendButton: controlState.hasSendButton,
       controlSignature: controlState.controlSignature,
-      answerText: getStreamingFingerprint()
+      answerText: currentSnapshot.fingerprint || getStreamingFingerprint()
     });
+    const observedAnswerDelta = answerNodeIncreased ||
+      lastAnswerChanged ||
+      answerLengthIncreased ||
+      state.observedNewAnswer;
+    const elapsedLongEnough = state.elapsed >= 15000 && state.stableMs >= 5000;
 
-    if (state.isComplete) {
+    if (state.isComplete && observedAnswerDelta) {
       console.log("Answer completed");
-      return state;
+      return {
+        ...state,
+        observedAnswerDelta,
+        answerNodeIncreased,
+        currentSnapshot
+      };
+    }
+    if (observedAnswerDelta && elapsedLongEnough) {
+      console.log("Answer completed by stable fallback");
+      return {
+        ...state,
+        observedAnswerDelta,
+        answerNodeIncreased,
+        currentSnapshot
+      };
     }
 
     await sleep(800);
@@ -588,8 +648,9 @@ async function processQuestion(questionData) {
     const input = await locateInputBox();
     await typeText(input, questionData.question);
 
-    const previousAnswerText = getLatestAssistantText();
-    const previousFingerprint = getStreamingFingerprint();
+    const baselineAnswerSnapshot = getAssistantAnswerSnapshot();
+    const previousAnswerText = baselineAnswerSnapshot.lastText || getLatestAssistantText();
+    const previousFingerprint = baselineAnswerSnapshot.fingerprint || getStreamingFingerprint();
     const baselineControlSignature = (await getSubmitControlState(input)).controlSignature;
     const sendMethod = await sendQuestion(input);
 
@@ -597,28 +658,45 @@ async function processQuestion(questionData) {
     const completionState = await waitForAnswerComplete(
       previousFingerprint,
       input,
-      baselineControlSignature
+      baselineControlSignature,
+      baselineAnswerSnapshot
     );
 
     await dismissImageFullscreen();
     let answerText = await extractAnswerText();
-    const screenshot = await requestScreenshot();
     const normalizedPrevAnswer = normalizeForCompare(previousAnswerText);
-    const normalizedAnswer = normalizeForCompare(answerText);
-    const hasNewTextAnswer = !!normalizedAnswer && normalizedAnswer !== normalizedPrevAnswer;
-    const hasScreenshot = !!screenshot;
+    let normalizedAnswer = normalizeForCompare(answerText);
     const sawStreamingChange = !!(completionState && completionState.observedNewAnswer);
+    const hasAnswerNodeIncreased = !!(completionState && completionState.answerNodeIncreased);
 
-    if (!hasNewTextAnswer && sawStreamingChange) {
+    if ((!normalizedAnswer || normalizedAnswer === normalizedPrevAnswer) && sawStreamingChange) {
       const fp = normalizeForCompare(getStreamingFingerprint());
       if (fp && fp !== normalizeForCompare(previousFingerprint)) {
         answerText = fp;
+        normalizedAnswer = normalizeForCompare(answerText);
       }
     }
 
-    if (!hasNewTextAnswer && !hasScreenshot && !sawStreamingChange) {
+    if ((!normalizedAnswer || normalizedAnswer === normalizedPrevAnswer) &&
+      completionState &&
+      completionState.currentSnapshot &&
+      completionState.currentSnapshot.lastText) {
+      answerText = completionState.currentSnapshot.lastText;
+      normalizedAnswer = normalizeForCompare(answerText);
+    }
+
+    if (!normalizedAnswer || normalizedAnswer === normalizedPrevAnswer) {
       throw new Error("No new assistant answer detected for current question");
     }
+    if (!hasAnswerNodeIncreased && normalizedPrevAnswer) {
+      const overlap = normalizedAnswer.startsWith(normalizedPrevAnswer) ||
+        normalizedPrevAnswer.startsWith(normalizedAnswer);
+      if (overlap) {
+        throw new Error("Detected overlapped answer content, blocking cross-question contamination");
+      }
+    }
+
+    const screenshot = await requestScreenshot();
 
     return {
       questionId: questionData.id,
