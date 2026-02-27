@@ -1,4 +1,4 @@
-// Sidepanel controller
+﻿// Sidepanel controller
 const elements = {
   fileInput: document.getElementById("fileInput"),
   fileInfo: document.getElementById("fileInfo"),
@@ -74,6 +74,23 @@ function parseKeywords(inputText) {
   return normalized.filter((item, index) => normalized.indexOf(item) === index);
 }
 
+function getSelectedPlatforms() {
+  if (!elements.platformSelect) {
+    return ["deepseek"];
+  }
+
+  const selected = Array.from(elements.platformSelect.selectedOptions || [])
+    .map((option) => option.value)
+    .filter(Boolean);
+
+  if (selected.length > 0) {
+    return selected.filter((item, index, arr) => arr.indexOf(item) === index);
+  }
+
+  const fallback = elements.platformSelect.value;
+  return fallback ? [fallback] : ["deepseek"];
+}
+
 function setKeywordStatus(text, isError = false) {
   if (!elements.keywordsStatus) return;
   elements.keywordsStatus.textContent = text || "";
@@ -121,11 +138,18 @@ elements.startBtn.addEventListener("click", async () => {
   }
 
   try {
+    const selectedPlatforms = getSelectedPlatforms();
+    if (selectedPlatforms.length === 0) {
+      alert("请至少选择一个平台。");
+      return;
+    }
+
     const response = await chrome.runtime.sendMessage({
       action: "startTest",
       data: {
         questions: currentQuestions,
-        platform: elements.platformSelect ? elements.platformSelect.value : "deepseek",
+        platform: selectedPlatforms[0],
+        platforms: selectedPlatforms,
         keywords: parseKeywords(elements.keywordsInput ? elements.keywordsInput.value : "")
       }
     });
@@ -136,7 +160,7 @@ elements.startBtn.addEventListener("click", async () => {
       elements.pauseBtn.classList.remove("hidden");
       elements.pauseBtn.textContent = "暂停";
       isPaused = false;
-      updateProgress(0, currentQuestions.length);
+      updateProgress(0, currentQuestions.length * selectedPlatforms.length);
     } else {
       alert(`启动测试失败：${response ? response.error : "未知错误"}`);
     }
@@ -191,9 +215,10 @@ function updateProgress(completed, total) {
   }
 }
 
-function showErrorDialog(error, question) {
+function showErrorDialog(error, question, platform = "") {
+  const platformPrefix = platform ? `[${platform}] ` : "";
   const userAction = confirm(
-    `测试错误：\n${error}\n\n问题：${question}\n\n点击“确定”继续（恢复），点击“取消”保持暂停。`
+    `测试错误：\n${platformPrefix}${error}\n\n问题：${question}\n\n点击“确定”继续（恢复），点击“取消”保持暂停。`
   );
 
   if (userAction) {
@@ -236,7 +261,10 @@ function showReport(session) {
 }
 
 function generateReportHTML(session) {
-  const { results, platform, startTime, completedTime } = session;
+  const { results, platform, platforms, startTime, completedTime } = session;
+  const platformLabel = Array.isArray(platforms) && platforms.length > 0
+    ? platforms.join(", ")
+    : (platform || "未知平台");
   const totalQuestions = results.length;
   const hitCount = results.filter((r) => r.isHit).length;
   const hitRate = totalQuestions > 0 ? ((hitCount / totalQuestions) * 100).toFixed(2) : "0.00";
@@ -248,7 +276,7 @@ function generateReportHTML(session) {
     <div class="report-header">
       <div>
         <h1>测试报告</h1>
-        <p>${escapeHtml(platform || "未知平台")} - ${formatDateTime(startTime)}</p>
+        <p>${escapeHtml(platformLabel)} - ${formatDateTime(startTime)}</p>
       </div>
       <button id="reportBackBtn" class="btn btn-secondary">返回</button>
     </div>
@@ -368,7 +396,8 @@ function applyReportFilters() {
 
       if (searchQuery) {
         const question = String(result.question || "").toLowerCase();
-        if (!question.includes(searchQuery)) return false;
+        const platform = String(result.platform || "").toLowerCase();
+        if (!question.includes(searchQuery) && !platform.includes(searchQuery)) return false;
       }
       return true;
     });
@@ -397,6 +426,9 @@ function generateResultsListHTML(results) {
         </div>
         <div class="result-question">
           <strong>问题：</strong> ${escapeHtml(result.question || "")}
+        </div>
+        <div class="result-platform">
+          <strong>平台：</strong> ${escapeHtml(result.platform || "未知平台")}
         </div>
         ${result.isHit ? `
           <div class="result-keywords">
@@ -529,7 +561,10 @@ async function copyAnswer(index) {
 
 function exportToExcel() {
   if (!reportState.session) return;
-  const { results, platform, startTime } = reportState.session;
+  const { results, platform, platforms, startTime } = reportState.session;
+  const platformLabel = Array.isArray(platforms) && platforms.length > 0
+    ? platforms.join("+")
+    : (platform || "平台");
 
   const csvContent = generateCSV(results || []);
   const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" });
@@ -538,20 +573,22 @@ function exportToExcel() {
 
   const datePart = startTime ? new Date(startTime).toISOString().split("T")[0] : "unknown-date";
   link.href = url;
-  link.download = `GEO测试报告_${platform || "平台"}_${datePart}.csv`;
+  link.download = `GEO测试报告_${platformLabel}_${datePart}.csv`;
   link.click();
 
   URL.revokeObjectURL(url);
 }
 
 function generateCSV(results) {
-  const headers = ["序号", "问题", "类别", "是否命中", "匹配关键词", "时间戳"];
+  const headers = ["序号", "平台", "问题", "类别", "是否命中", "匹配关键词", "完整回答内容", "时间戳"];
   const rows = results.map((result, index) => [
     index + 1,
+    csvCell(result.platform || ""),
     csvCell(result.question || ""),
     csvCell(result.category || ""),
     result.isHit ? "是" : "否",
     csvCell(Array.isArray(result.matchedKeywords) ? result.matchedKeywords.join(", ") : ""),
+    csvCell(result.answer || ""),
     result.timestamp ? new Date(result.timestamp).toLocaleString() : ""
   ]);
 
@@ -631,7 +668,7 @@ async function loadHistory() {
 chrome.runtime.onMessage.addListener((message) => {
   switch (message.action) {
     case "questionStarted":
-      elements.currentQuestion.textContent = `当前问题：“${message.question}”`;
+      elements.currentQuestion.textContent = `当前问题 [${message.platform || "平台"}]：“${message.question}”`;
       elements.statusText.textContent = "等待回答...";
       break;
     case "progressUpdate":
@@ -655,8 +692,8 @@ chrome.runtime.onMessage.addListener((message) => {
       elements.statusText.textContent = "测试进行中...";
       break;
     case "error":
-      elements.statusText.textContent = `错误：${message.error}`;
-      showErrorDialog(message.error, message.question);
+      elements.statusText.textContent = `错误 [${message.platform || "平台"}]：${message.error}`;
+      showErrorDialog(message.error, message.question, message.platform);
       break;
     default:
       break;

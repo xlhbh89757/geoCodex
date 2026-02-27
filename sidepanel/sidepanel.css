@@ -100,6 +100,20 @@ section {
   margin-bottom: 8px;
 }
 
+.platform-multi-select {
+  min-width: 140px;
+  min-height: 84px;
+  padding: 6px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #fff;
+}
+
+.platform-hint {
+  font-size: 12px;
+  color: #666;
+}
+
 .config-item-column {
   align-items: flex-start;
   flex-direction: column;
@@ -343,6 +357,12 @@ section {
 .result-question {
   margin: 8px 0;
   font-size: 14px;
+}
+
+.result-platform {
+  margin: 4px 0;
+  font-size: 12px;
+  color: #4b5563;
 }
 
 .result-keywords {

@@ -21,12 +21,13 @@
     <section class="config-section">
       <h2>测试配置</h2>
       <div class="config-item">
-        <label for="platformSelect">平台:</label>
-        <select id="platformSelect">
-          <option value="deepseek">DeepSeek</option>
+        <label for="platformSelect">平台（可多选）:</label>
+        <select id="platformSelect" class="platform-multi-select" multiple size="3">
+          <option value="deepseek" selected>DeepSeek</option>
           <option value="doubao">豆包</option>
           <option value="yuanbao">混元</option>
         </select>
+        <div class="platform-hint">提示：按 Ctrl/Command 可多选</div>
       </div>
       <div class="config-item config-item-column">
         <label for="keywordsInput">关键词（每行一个，或用英文逗号分隔）</label>
