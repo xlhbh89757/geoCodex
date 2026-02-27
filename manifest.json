@@ -5,6 +5,7 @@
   "description": "自动化测试 AI 平台的 GEO 效果",
   "permissions": [
     "storage",
+    "unlimitedStorage",
     "tabs",
     "activeTab",
     "scripting",

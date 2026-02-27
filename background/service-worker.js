@@ -69,10 +69,63 @@ async function handleMessage(message, sender) {
     case "captureScreenshot":
       return captureScreenshot(sender.tab ? sender.tab.id : null);
     case "getSession":
-      return { session: currentSession };
+      return { session: await getSessionForUi() };
     default:
       return { success: false, error: "Unknown action" };
   }
+}
+
+async function getSessionForUi() {
+  if (currentSession) {
+    return currentSession;
+  }
+
+  const stored = await chrome.storage.local.get("currentSession");
+  currentSession = stored.currentSession || null;
+  return currentSession;
+}
+
+function toStorageResult(result) {
+  if (!result || typeof result !== "object") {
+    return result;
+  }
+
+  const snapshot = { ...result };
+  if (Object.prototype.hasOwnProperty.call(snapshot, "screenshot")) {
+    snapshot.hasScreenshot = Boolean(snapshot.screenshot);
+    delete snapshot.screenshot;
+  }
+  return snapshot;
+}
+
+function toStorageSession(session) {
+  if (!session || typeof session !== "object") {
+    return session;
+  }
+
+  const snapshot = { ...session };
+  const states = session.platformStates && typeof session.platformStates === "object"
+    ? session.platformStates
+    : {};
+  snapshot.platformStates = {};
+  Object.keys(states).forEach((platformName) => {
+    const state = states[platformName] || {};
+    snapshot.platformStates[platformName] = {
+      status: state.status || "running",
+      currentIndex: Number(state.currentIndex || 0),
+      completed: Number(state.completed || 0),
+      tabId: state.tabId == null ? null : Number(state.tabId)
+    };
+  });
+  snapshot.results = Array.isArray(session.results)
+    ? session.results.map((item) => toStorageResult(item))
+    : [];
+  return snapshot;
+}
+
+async function persistCurrentSession() {
+  if (!currentSession) return;
+  await chrome.storage.local.set({ currentSession: toStorageSession(currentSession) });
 }
 
 async function startTest(data) {
@@ -90,7 +143,9 @@ async function startTest(data) {
         status: "running",
         currentIndex: 0,
         completed: 0,
-        tabId: null
+        tabId: null,
+        processing: false,
+        nextTimer: null
       };
     });
 
@@ -120,7 +175,7 @@ async function startTest(data) {
     }));
 
     // Save to storage
-    await chrome.storage.local.set({ currentSession });
+    await persistCurrentSession();
 
     // Start processing questions on all selected platforms in parallel
     selectedPlatforms.forEach((platformName) => {
@@ -230,10 +285,45 @@ function ensurePlatformState(platform, session = currentSession) {
       status: session && session.status === "paused" ? "paused" : "running",
       currentIndex: 0,
       completed: 0,
-      tabId: null
+      tabId: null,
+      processing: false,
+      nextTimer: null
     };
   }
+  if (typeof states[platform].processing !== "boolean") {
+    states[platform].processing = false;
+  }
+  if (!Object.prototype.hasOwnProperty.call(states[platform], "nextTimer")) {
+    states[platform].nextTimer = null;
+  }
   return states[platform];
+}
+
+function clearPlatformTimer(platform) {
+  if (!currentSession) return;
+  const state = ensurePlatformState(resolvePlatform(platform), currentSession);
+  if (state.nextTimer) {
+    clearTimeout(state.nextTimer);
+    state.nextTimer = null;
+  }
+}
+
+function clearAllPlatformTimers() {
+  if (!currentSession) return;
+  const platforms = getActivePlatforms(currentSession);
+  platforms.forEach((name) => clearPlatformTimer(name));
+}
+
+function scheduleNextQuestionForPlatform(platform, tabId, delayMs = 1000) {
+  if (!currentSession || currentSession.status !== "running") return;
+  const platformName = resolvePlatform(platform);
+  const state = ensurePlatformState(platformName, currentSession);
+  clearPlatformTimer(platformName);
+  state.nextTimer = setTimeout(() => {
+    const activeState = ensurePlatformState(platformName, currentSession);
+    activeState.nextTimer = null;
+    processNextQuestionForPlatform(platformName, tabId);
+  }, delayMs);
 }
 
 function areAllPlatformsCompleted() {
@@ -259,18 +349,23 @@ async function processNextQuestionForPlatform(platform, tabId) {
   const platformState = ensurePlatformState(platformName);
   const { questions } = currentSession;
 
+  if (platformState.processing) {
+    return;
+  }
+
   if (platformState.status === "completed") {
     await maybeCompleteTest();
     return;
   }
   if (platformState.currentIndex >= questions.length) {
     platformState.status = "completed";
-    await chrome.storage.local.set({ currentSession });
+    await persistCurrentSession();
     await maybeCompleteTest();
     return;
   }
 
   const questionData = questions[platformState.currentIndex];
+  platformState.processing = true;
 
   try {
     let workingTabId = tabId || platformState.tabId;
@@ -325,7 +420,7 @@ async function processNextQuestionForPlatform(platform, tabId) {
         platformState.status = "completed";
       }
 
-      await chrome.storage.local.set({ currentSession });
+      await persistCurrentSession();
 
       notifySidepanel({
         action: "progressUpdate",
@@ -336,13 +431,13 @@ async function processNextQuestionForPlatform(platform, tabId) {
           completed: platformState.completed,
           total: questions.length
         },
-        result
+        result: toStorageResult(result)
       });
 
       if (platformState.status === "completed") {
         await maybeCompleteTest();
       } else {
-        setTimeout(() => processNextQuestionForPlatform(platformName, workingTabId), 1000);
+        scheduleNextQuestionForPlatform(platformName, workingTabId, 1000);
       }
     } else {
       await handleError(
@@ -353,6 +448,8 @@ async function processNextQuestionForPlatform(platform, tabId) {
     }
   } catch (error) {
     await handleError(error.message, questionData, platformName);
+  } finally {
+    platformState.processing = false;
   }
 }
 
@@ -396,13 +493,14 @@ async function captureScreenshot(tabId) {
 async function pauseTest() {
   if (currentSession && currentSession.status === "running") {
     currentSession.status = "paused";
+    clearAllPlatformTimers();
     const states = getPlatformStates(currentSession);
     Object.values(states).forEach((state) => {
       if (state && state.status === "running") {
         state.status = "paused";
       }
     });
-    await chrome.storage.local.set({ currentSession });
+    await persistCurrentSession();
     notifySidepanel({ action: "testPaused" });
     return { success: true };
   }
@@ -449,7 +547,7 @@ async function resumeTest() {
       );
     }));
 
-    await chrome.storage.local.set({ currentSession });
+    await persistCurrentSession();
     platforms.forEach((platformName) => {
       const state = states[platformName];
       if (state && state.status === "running") {
@@ -469,6 +567,7 @@ async function completeTest() {
   if (currentSession.status === "completed") return { success: true };
 
   currentSession.status = "completed";
+  clearAllPlatformTimers();
   currentSession.completedTime = Date.now();
 
   const result = await chrome.storage.local.get("history");
@@ -491,7 +590,7 @@ async function completeTest() {
   if (history.length > 10) history.splice(10);
 
   await chrome.storage.local.set({
-    currentSession,
+    currentSession: toStorageSession(currentSession),
     history
   });
 
@@ -505,11 +604,12 @@ async function handleError(errorMessage, questionData, platform) {
   if (!currentSession) return;
 
   currentSession.status = "paused";
+  clearAllPlatformTimers();
   if (platform) {
     const state = ensurePlatformState(resolvePlatform(platform), currentSession);
     state.status = "paused";
   }
-  await chrome.storage.local.set({ currentSession });
+  await persistCurrentSession();
 
   notifySidepanel({
     action: "error",

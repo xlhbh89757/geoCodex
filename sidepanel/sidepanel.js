@@ -29,6 +29,17 @@ let reportState = {
   searchQuery: ""
 };
 
+function hasLoadedQuestions() {
+  return Array.isArray(currentQuestions) && currentQuestions.length > 0;
+}
+
+async function enableReportIfHasResults() {
+  const session = await getCurrentSession();
+  if (session && Array.isArray(session.results) && session.results.length > 0) {
+    elements.reportBtn.disabled = false;
+  }
+}
+
 // File upload handler
 elements.fileInput.addEventListener("change", handleFileUpload);
 if (elements.saveKeywordsBtn) {
@@ -132,12 +143,21 @@ async function saveKeywordConfig() {
 
 // Start test button handler
 elements.startBtn.addEventListener("click", async () => {
-  if (!currentQuestions || currentQuestions.length === 0) {
-    alert("请先上传询问词库。");
-    return;
-  }
-
   try {
+    let questionsForRun = currentQuestions;
+    if (!Array.isArray(questionsForRun) || questionsForRun.length === 0) {
+      const existingSession = await getCurrentSession();
+      if (existingSession && Array.isArray(existingSession.questions) && existingSession.questions.length > 0) {
+        questionsForRun = existingSession.questions;
+        currentQuestions = questionsForRun;
+      }
+    }
+
+    if (!Array.isArray(questionsForRun) || questionsForRun.length === 0) {
+      alert("请先上传询问词库。");
+      return;
+    }
+
     const selectedPlatforms = getSelectedPlatforms();
     if (selectedPlatforms.length === 0) {
       alert("请至少选择一个平台。");
@@ -147,7 +167,7 @@ elements.startBtn.addEventListener("click", async () => {
     const response = await chrome.runtime.sendMessage({
       action: "startTest",
       data: {
-        questions: currentQuestions,
+        questions: questionsForRun,
         platform: selectedPlatforms[0],
         platforms: selectedPlatforms,
         keywords: parseKeywords(elements.keywordsInput ? elements.keywordsInput.value : "")
@@ -160,7 +180,7 @@ elements.startBtn.addEventListener("click", async () => {
       elements.pauseBtn.classList.remove("hidden");
       elements.pauseBtn.textContent = "暂停";
       isPaused = false;
-      updateProgress(0, currentQuestions.length * selectedPlatforms.length);
+      updateProgress(0, questionsForRun.length * selectedPlatforms.length);
     } else {
       alert(`启动测试失败：${response ? response.error : "未知错误"}`);
     }
@@ -203,6 +223,9 @@ function updateProgress(completed, total) {
   const percentage = total > 0 ? (completed / total) * 100 : 0;
   elements.progressFill.style.width = `${percentage}%`;
   elements.progressText.textContent = `${completed} / ${total}`;
+  if (completed > 0) {
+    elements.reportBtn.disabled = false;
+  }
 
   const remaining = total - completed;
   const estimatedMinutes = Math.ceil((remaining * 30) / 60);
@@ -227,6 +250,15 @@ function showErrorDialog(error, question, platform = "") {
 }
 
 async function getCurrentSession() {
+  try {
+    const response = await chrome.runtime.sendMessage({ action: "getSession" });
+    if (response && response.session) {
+      return response.session;
+    }
+  } catch (error) {
+    // Fall back to storage snapshot below.
+  }
+
   const result = await chrome.storage.local.get("currentSession");
   return result.currentSession || null;
 }
@@ -679,12 +711,16 @@ chrome.runtime.onMessage.addListener((message) => {
       elements.statusText.textContent = "测试已完成";
       elements.pauseBtn.classList.add("hidden");
       elements.reportBtn.disabled = false;
+      elements.startBtn.disabled = false;
       loadHistory();
       break;
     case "testPaused":
       isPaused = true;
+      elements.pauseBtn.classList.remove("hidden");
       elements.pauseBtn.textContent = "恢复";
       elements.statusText.textContent = "测试已暂停";
+      elements.startBtn.disabled = false;
+      enableReportIfHasResults();
       break;
     case "testResumed":
       isPaused = false;
@@ -692,7 +728,12 @@ chrome.runtime.onMessage.addListener((message) => {
       elements.statusText.textContent = "测试进行中...";
       break;
     case "error":
+      isPaused = true;
+      elements.pauseBtn.classList.remove("hidden");
+      elements.pauseBtn.textContent = "恢复";
       elements.statusText.textContent = `错误 [${message.platform || "平台"}]：${message.error}`;
+      elements.startBtn.disabled = false;
+      enableReportIfHasResults();
       showErrorDialog(message.error, message.question, message.platform);
       break;
     default:
@@ -707,4 +748,5 @@ window.closeModal = closeModal;
 // Initialize history on startup
 loadHistory();
 loadKeywordConfig();
+enableReportIfHasResults();
 console.log("Sidepanel initialized");
