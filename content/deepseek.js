@@ -211,6 +211,63 @@ async function sendQuestion(inputElement) {
   return "keyboard";
 }
 
+function getInputValueSnapshot(inputElement) {
+  if (!inputElement) return "";
+  if (inputElement instanceof HTMLTextAreaElement || inputElement instanceof HTMLInputElement) {
+    return normalizeForCompare(inputElement.value || "");
+  }
+  if (inputElement.isContentEditable) {
+    return normalizeForCompare(inputElement.innerText || inputElement.textContent || "");
+  }
+  return "";
+}
+
+async function waitForSubmissionStart(
+  inputElement,
+  baselineFingerprint,
+  baselineControlSignature,
+  timeoutMs = 4000
+) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const controlState = await getSubmitControlState(inputElement);
+    const currentFingerprint = normalizeForCompare(getStreamingFingerprint());
+    const inputValue = getInputValueSnapshot(inputElement);
+    const controlChanged = !!controlState.controlSignature &&
+      controlState.controlSignature !== baselineControlSignature;
+
+    if (
+      controlState.hasStopButton ||
+      controlChanged ||
+      (!inputValue) ||
+      (currentFingerprint && currentFingerprint !== normalizeForCompare(baselineFingerprint))
+    ) {
+      return true;
+    }
+
+    await sleep(200);
+  }
+
+  return false;
+}
+
+async function ensureQuestionSubmissionStarted(inputElement, baselineFingerprint, baselineControlSignature) {
+  if (await waitForSubmissionStart(inputElement, baselineFingerprint, baselineControlSignature)) {
+    return;
+  }
+
+  console.warn("Submission not detected after initial send, retrying with keyboard fallback.");
+  submitByKeyboard(inputElement, false);
+  await sleep(150);
+  submitByKeyboard(inputElement, true);
+
+  if (await waitForSubmissionStart(inputElement, baselineFingerprint, baselineControlSignature, 5000)) {
+    return;
+  }
+
+  throw new Error("Question submission did not start");
+}
+
 function getLatestAssistantText() {
   const text = extractLatestAssistantTextFromDom();
   return text || "";
@@ -249,9 +306,19 @@ function isStopControl(button) {
   const hint = getButtonHintText(button);
   return /(stop|停止|中止|interrupt|cancel generation)/i.test(hint);
 }
-function isFullscreenControl(button) {
+function isOpenFullscreenControl(button) {
   const hint = getButtonHintText(button);
-  return /(full[\s-]?screen|exit full|enter full|\u5168\u5c4f|\u9000\u51fa\u5168\u5c4f|image viewer|lightbox)/i.test(hint);
+  return /(enter full|full[\s-]?screen|\u5168\u5c4f|image viewer|lightbox)/i.test(hint) &&
+    !/(exit full|close|dismiss|\u5173\u95ed|\u9000\u51fa\u5168\u5c4f)/i.test(hint);
+}
+
+function isCloseFullscreenControl(button) {
+  const hint = getButtonHintText(button);
+  return /(exit full|close|dismiss|\u5173\u95ed|\u9000\u51fa\u5168\u5c4f)/i.test(hint);
+}
+
+function isFullscreenControl(button) {
+  return isOpenFullscreenControl(button) || isCloseFullscreenControl(button);
 }
 
 function isSendControl(button) {
@@ -455,7 +522,7 @@ async function dismissImageFullscreen() {
     document.querySelectorAll("button, [role='button'], [aria-label], [title]")
   ).filter((el) => isElementVisible(el) && !el.disabled);
   for (const button of candidates) {
-    if (!isFullscreenControl(button)) {
+    if (!isCloseFullscreenControl(button)) {
       continue;
     }
     button.click();
@@ -559,6 +626,7 @@ async function processQuestion(questionData) {
     const previousFingerprint = getStreamingFingerprint();
     const baselineControlSignature = (await getSubmitControlState(input)).controlSignature;
     const sendMethod = await sendQuestion(input);
+    await ensureQuestionSubmissionStarted(input, previousFingerprint, baselineControlSignature);
 
     console.log(`Question sent via ${sendMethod}, waiting for answer...`);
     const completionState = await waitForAnswerComplete(
@@ -569,23 +637,23 @@ async function processQuestion(questionData) {
 
     await dismissImageFullscreen();
     let answerText = await extractAnswerText();
-    const screenshot = await requestScreenshot();
     const normalizedPrevAnswer = normalizeForCompare(previousAnswerText);
-    const normalizedAnswer = normalizeForCompare(answerText);
-    const hasNewTextAnswer = !!normalizedAnswer && normalizedAnswer !== normalizedPrevAnswer;
-    const hasScreenshot = !!screenshot;
+    let normalizedAnswer = normalizeForCompare(answerText);
     const sawStreamingChange = !!(completionState && completionState.observedNewAnswer);
 
-    if (!hasNewTextAnswer && sawStreamingChange) {
+    if ((!normalizedAnswer || normalizedAnswer === normalizedPrevAnswer) && sawStreamingChange) {
       const fp = normalizeForCompare(getStreamingFingerprint());
       if (fp && fp !== normalizeForCompare(previousFingerprint)) {
         answerText = fp;
+        normalizedAnswer = normalizeForCompare(answerText);
       }
     }
 
-    if (!hasNewTextAnswer && !hasScreenshot && !sawStreamingChange) {
+    if (!normalizedAnswer || normalizedAnswer === normalizedPrevAnswer) {
       throw new Error("No new assistant answer detected for current question");
     }
+
+    const screenshot = await requestScreenshot();
 
     return {
       questionId: questionData.id,
