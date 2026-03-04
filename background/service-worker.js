@@ -340,6 +340,41 @@ async function maybeCompleteTest() {
   }
 }
 
+function createFailedResult(questionData, platform, errorMessage) {
+  return {
+    questionId: questionData ? questionData.id : "",
+    question: questionData ? questionData.question : "",
+    category: questionData ? questionData.category : "",
+    platform: platform || "",
+    answer: `[测试失败] ${errorMessage}`,
+    error: errorMessage,
+    status: "failed",
+    isHit: false,
+    matchedKeywords: [],
+    timestamp: Date.now()
+  };
+}
+
+function recordQuestionResult(platform, result) {
+  if (!currentSession) return null;
+
+  const platformName = resolvePlatform(platform);
+  const platformState = ensurePlatformState(platformName);
+  const { questions } = currentSession;
+
+  currentSession.results.push(result);
+  platformState.completed += 1;
+  platformState.currentIndex += 1;
+  currentSession.progress.completed += 1;
+  currentSession.progress.currentIndex = currentSession.progress.completed;
+
+  if (platformState.currentIndex >= questions.length) {
+    platformState.status = "completed";
+  }
+
+  return platformState;
+}
+
 async function processNextQuestionForPlatform(platform, tabId) {
   if (!currentSession || currentSession.status !== "running") {
     return;
@@ -410,15 +445,7 @@ async function processNextQuestionForPlatform(platform, tabId) {
         matchedKeywords: analysis.matchedKeywords
       };
 
-      currentSession.results.push(result);
-      platformState.completed += 1;
-      platformState.currentIndex += 1;
-      currentSession.progress.completed += 1;
-      currentSession.progress.currentIndex = currentSession.progress.completed;
-
-      if (platformState.currentIndex >= questions.length) {
-        platformState.status = "completed";
-      }
+      recordQuestionResult(platformName, result);
 
       await persistCurrentSession();
 
@@ -603,17 +630,34 @@ async function completeTest() {
 async function handleError(errorMessage, questionData, platform) {
   if (!currentSession) return;
 
+  const platformName = resolvePlatform(platform);
+  const failedResult = createFailedResult(questionData, platformName, errorMessage);
+  const platformState = recordQuestionResult(platformName, failedResult);
   currentSession.status = "paused";
   clearAllPlatformTimers();
-  if (platform) {
-    const state = ensurePlatformState(resolvePlatform(platform), currentSession);
-    state.status = "paused";
-  }
+  const states = getPlatformStates(currentSession);
+  Object.keys(states).forEach((name) => {
+    if (states[name] && states[name].status !== "completed") {
+      states[name].status = "paused";
+    }
+  });
   await persistCurrentSession();
 
   notifySidepanel({
+    action: "progressUpdate",
+    platform: platformName,
+    progress: currentSession.progress,
+    platformProgress: {
+      platform: platformName,
+      completed: platformState ? platformState.completed : 0,
+      total: currentSession.questions.length
+    },
+    result: toStorageResult(failedResult)
+  });
+
+  notifySidepanel({
     action: "error",
-    platform: platform || "",
+    platform: platformName,
     error: errorMessage,
     question: questionData ? questionData.question : ""
   });

@@ -5,6 +5,7 @@ console.log("GEO Testing: DeepSeek content script loaded");
 let locator;
 let isProcessing = false;
 let initPromise = null;
+const DIAGNOSTIC_LOG_INTERVAL_MS = 5000;
 
 // Initialize locator
 async function init() {
@@ -28,6 +29,35 @@ async function init() {
 // Sleep helper
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function summarizeSignature(signature) {
+  if (!signature) return "";
+  return String(signature).replace(/\s+/g, " ").trim().slice(0, 160);
+}
+
+function buildDiagnosticSnapshot(controlState, trackerState, baselineControlSignature, fingerprint) {
+  return {
+    elapsedMs: trackerState ? trackerState.elapsed : 0,
+    stableMs: trackerState ? trackerState.stableMs : 0,
+    observedNewAnswer: !!(trackerState && trackerState.observedNewAnswer),
+    sawStopButton: !!(trackerState && trackerState.sawStopButton),
+    hasStopButton: !!(controlState && controlState.hasStopButton),
+    hasSendButton: !!(controlState && controlState.hasSendButton),
+    controlChanged: !!(
+      baselineControlSignature &&
+      controlState &&
+      controlState.controlSignature &&
+      controlState.controlSignature !== baselineControlSignature
+    ),
+    controlSignature: summarizeSignature(controlState ? controlState.controlSignature : ""),
+    baselineControlSignature: summarizeSignature(baselineControlSignature),
+    fingerprintLength: fingerprint ? fingerprint.length : 0
+  };
+}
+
+function logDiagnostic(phase, snapshot) {
+  console.log(`[GEO][deepseek] ${phase}`, snapshot);
 }
 
 // Type text into input
@@ -69,6 +99,38 @@ async function typeText(element, text) {
   element.dispatchEvent(inputEvent);
   element.dispatchEvent(changeEvent);
   await sleep(500);
+}
+
+async function clearText(element) {
+  element.focus();
+
+  if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+    const proto = element instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (setter) {
+      setter.call(element, "");
+    } else {
+      element.value = "";
+    }
+  } else if (element.isContentEditable) {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const cleared = typeof document.execCommand === "function" &&
+      document.execCommand("delete", false);
+    if (!cleared) {
+      element.textContent = "";
+    }
+    selection.removeAllRanges();
+  }
+
+  element.dispatchEvent(new Event("input", { bubbles: true }));
+  element.dispatchEvent(new Event("change", { bubbles: true }));
+  await sleep(250);
 }
 
 function isElementVisible(element) {
@@ -229,12 +291,23 @@ async function waitForSubmissionStart(
   timeoutMs = 4000
 ) {
   const start = Date.now();
+  let lastSnapshot = null;
   while (Date.now() - start < timeoutMs) {
     const controlState = await getSubmitControlState(inputElement);
     const currentFingerprint = normalizeForCompare(getStreamingFingerprint());
     const inputValue = getInputValueSnapshot(inputElement);
     const controlChanged = !!controlState.controlSignature &&
       controlState.controlSignature !== baselineControlSignature;
+    lastSnapshot = {
+      elapsedMs: Date.now() - start,
+      hasStopButton: controlState.hasStopButton,
+      hasSendButton: controlState.hasSendButton,
+      controlChanged,
+      inputValueLength: inputValue.length,
+      fingerprintChanged: !!(currentFingerprint && currentFingerprint !== normalizeForCompare(baselineFingerprint)),
+      controlSignature: summarizeSignature(controlState.controlSignature),
+      baselineControlSignature: summarizeSignature(baselineControlSignature)
+    };
 
     if (
       controlState.hasStopButton ||
@@ -242,12 +315,17 @@ async function waitForSubmissionStart(
       (!inputValue) ||
       (currentFingerprint && currentFingerprint !== normalizeForCompare(baselineFingerprint))
     ) {
+      logDiagnostic("submission-start-detected", lastSnapshot);
       return true;
     }
 
     await sleep(200);
   }
 
+  logDiagnostic("submission-start-timeout", lastSnapshot || {
+    elapsedMs: timeoutMs,
+    baselineControlSignature: summarizeSignature(baselineControlSignature)
+  });
   return false;
 }
 
@@ -266,6 +344,44 @@ async function ensureQuestionSubmissionStarted(inputElement, baselineFingerprint
   }
 
   throw new Error("Question submission did not start");
+}
+
+async function submitQuestionWithRetry(inputElement, questionText, previousFingerprint, maxAttempts = 3) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    logDiagnostic("submission-attempt", { attempt, maxAttempts });
+    if (attempt > 1) {
+      console.warn(`Retrying question submission (${attempt}/${maxAttempts})`);
+      await dismissImageFullscreen();
+      await clearText(inputElement);
+      await typeText(inputElement, questionText);
+      await sleep(300 * attempt);
+    }
+
+    const baselineControlSignature = (await getSubmitControlState(inputElement)).controlSignature;
+    const sendMethod = await sendQuestion(inputElement);
+
+    try {
+      await ensureQuestionSubmissionStarted(
+        inputElement,
+        previousFingerprint,
+        baselineControlSignature
+      );
+
+      return { sendMethod, baselineControlSignature };
+    } catch (error) {
+      lastError = error;
+      logDiagnostic("submission-attempt-failed", {
+        attempt,
+        maxAttempts,
+        error: error.message
+      });
+      await sleep(600 * attempt);
+    }
+  }
+
+  throw lastError || new Error("Question submission did not start");
 }
 
 function getLatestAssistantText() {
@@ -542,6 +658,8 @@ async function waitForAnswerComplete(
   maxWaitTime = 120000
 ) {
   const startTime = Date.now();
+  let lastDiagnosticLogAt = 0;
+  let lastSnapshot = null;
   const tracker = createAnswerCompletionTracker({
     baselineText: baselineFingerprint,
     baselineControlSignature,
@@ -556,22 +674,38 @@ async function waitForAnswerComplete(
 
   while (Date.now() - startTime < maxWaitTime) {
     const controlState = await getSubmitControlState(inputElement);
+    const fingerprint = getStreamingFingerprint();
     const state = tracker.update({
       now: Date.now(),
       hasStopButton: controlState.hasStopButton,
       hasSendButton: controlState.hasSendButton,
       controlSignature: controlState.controlSignature,
-      answerText: getStreamingFingerprint()
+      answerText: fingerprint
     });
+    lastSnapshot = buildDiagnosticSnapshot(
+      controlState,
+      state,
+      baselineControlSignature,
+      fingerprint
+    );
+
+    if (Date.now() - lastDiagnosticLogAt >= DIAGNOSTIC_LOG_INTERVAL_MS) {
+      logDiagnostic("completion-heartbeat", lastSnapshot);
+      lastDiagnosticLogAt = Date.now();
+    }
 
     if (state.isComplete) {
-      console.log("Answer completed");
+      logDiagnostic("completion-detected", lastSnapshot);
       return state;
     }
 
     await sleep(800);
   }
 
+  console.error("[GEO][deepseek] completion-timeout", lastSnapshot || {
+    elapsedMs: Date.now() - startTime,
+    baselineControlSignature: summarizeSignature(baselineControlSignature)
+  });
   throw new Error(`Answer timeout after ${maxWaitTime / 1000} seconds`);
 }
 
@@ -624,15 +758,17 @@ async function processQuestion(questionData) {
 
     const previousAnswerText = getLatestAssistantText();
     const previousFingerprint = getStreamingFingerprint();
-    const baselineControlSignature = (await getSubmitControlState(input)).controlSignature;
-    const sendMethod = await sendQuestion(input);
-    await ensureQuestionSubmissionStarted(input, previousFingerprint, baselineControlSignature);
+    const submission = await submitQuestionWithRetry(
+      input,
+      questionData.question,
+      previousFingerprint
+    );
 
-    console.log(`Question sent via ${sendMethod}, waiting for answer...`);
+    console.log(`Question sent via ${submission.sendMethod}, waiting for answer...`);
     const completionState = await waitForAnswerComplete(
       previousFingerprint,
       input,
-      baselineControlSignature
+      submission.baselineControlSignature
     );
 
     await dismissImageFullscreen();

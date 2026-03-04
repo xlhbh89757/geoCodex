@@ -5,6 +5,7 @@ console.log("GEO Testing: Doubao content script loaded");
 let locator;
 let isProcessing = false;
 let initPromise = null;
+const DIAGNOSTIC_LOG_INTERVAL_MS = 5000;
 
 // Initialize locator
 async function init() {
@@ -28,6 +29,35 @@ async function init() {
 // Sleep helper
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function summarizeSignature(signature) {
+  if (!signature) return "";
+  return String(signature).replace(/\s+/g, " ").trim().slice(0, 160);
+}
+
+function buildDiagnosticSnapshot(controlState, trackerState, baselineControlSignature, fingerprint) {
+  return {
+    elapsedMs: trackerState ? trackerState.elapsed : 0,
+    stableMs: trackerState ? trackerState.stableMs : 0,
+    observedNewAnswer: !!(trackerState && trackerState.observedNewAnswer),
+    sawStopButton: !!(trackerState && trackerState.sawStopButton),
+    hasStopButton: !!(controlState && controlState.hasStopButton),
+    hasSendButton: !!(controlState && controlState.hasSendButton),
+    controlChanged: !!(
+      baselineControlSignature &&
+      controlState &&
+      controlState.controlSignature &&
+      controlState.controlSignature !== baselineControlSignature
+    ),
+    controlSignature: summarizeSignature(controlState ? controlState.controlSignature : ""),
+    baselineControlSignature: summarizeSignature(baselineControlSignature),
+    fingerprintLength: fingerprint ? fingerprint.length : 0
+  };
+}
+
+function logDiagnostic(phase, snapshot) {
+  console.log(`[GEO][doubao] ${phase}`, snapshot);
 }
 
 // Type text into input
@@ -498,6 +528,8 @@ async function waitForAnswerComplete(
   maxWaitTime = 120000
 ) {
   const startTime = Date.now();
+  let lastDiagnosticLogAt = 0;
+  let lastSnapshot = null;
   const tracker = createAnswerCompletionTracker({
     baselineText: baselineFingerprint,
     baselineControlSignature,
@@ -512,22 +544,38 @@ async function waitForAnswerComplete(
 
   while (Date.now() - startTime < maxWaitTime) {
     const controlState = await getSubmitControlState(inputElement);
+    const fingerprint = getStreamingFingerprint();
     const state = tracker.update({
       now: Date.now(),
       hasStopButton: controlState.hasStopButton,
       hasSendButton: controlState.hasSendButton,
       controlSignature: controlState.controlSignature,
-      answerText: getStreamingFingerprint()
+      answerText: fingerprint
     });
+    lastSnapshot = buildDiagnosticSnapshot(
+      controlState,
+      state,
+      baselineControlSignature,
+      fingerprint
+    );
+
+    if (Date.now() - lastDiagnosticLogAt >= DIAGNOSTIC_LOG_INTERVAL_MS) {
+      logDiagnostic("completion-heartbeat", lastSnapshot);
+      lastDiagnosticLogAt = Date.now();
+    }
 
     if (state.isComplete) {
-      console.log("Answer completed");
+      logDiagnostic("completion-detected", lastSnapshot);
       return state;
     }
 
     await sleep(800);
   }
 
+  console.error("[GEO][doubao] completion-timeout", lastSnapshot || {
+    elapsedMs: Date.now() - startTime,
+    baselineControlSignature: summarizeSignature(baselineControlSignature)
+  });
   throw new Error(`Answer timeout after ${maxWaitTime / 1000} seconds`);
 }
 

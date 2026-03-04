@@ -241,7 +241,7 @@ function updateProgress(completed, total) {
 function showErrorDialog(error, question, platform = "") {
   const platformPrefix = platform ? `[${platform}] ` : "";
   const userAction = confirm(
-    `测试错误：\n${platformPrefix}${error}\n\n问题：${question}\n\n点击“确定”继续（恢复），点击“取消”保持暂停。`
+    `测试错误：\n${platformPrefix}${error}\n\n问题：${question}\n\n点击“确定”从下一条询问词继续，点击“取消”保持暂停。`
   );
 
   if (userAction) {
