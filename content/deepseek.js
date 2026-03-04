@@ -6,6 +6,28 @@ let locator;
 let isProcessing = false;
 let initPromise = null;
 const DIAGNOSTIC_LOG_INTERVAL_MS = 5000;
+const ASSISTANT_TEXT_SELECTOR_GROUPS = [
+  ["div[data-testid='message_text_content']"],
+  [
+    "[data-message-author-role='assistant'] .ds-markdown",
+    "[data-message-author-role='assistant'] .markdown",
+    "[data-message-author-role='assistant']"
+  ],
+  [
+    "[role='article'] .ds-markdown",
+    "[role='article'] .markdown",
+    ".message-content .ds-markdown",
+    ".message-content .markdown"
+  ],
+  [
+    ".ds-markdown",
+    ".markdown",
+    ".message-content",
+    "[role='article']",
+    "[class*='assistant']",
+    "[class*='answer']"
+  ]
+];
 
 // Initialize locator
 async function init() {
@@ -567,6 +589,16 @@ function normalizeForCompare(value) {
   return (value || "").replace(/\s+/g, " ").trim();
 }
 
+function getNodeDepth(node) {
+  let depth = 0;
+  let current = node;
+  while (current && current.parentElement) {
+    depth += 1;
+    current = current.parentElement;
+  }
+  return depth;
+}
+
 function isComposerArea(element) {
   if (!element || !element.closest) return false;
   return !!(
@@ -591,36 +623,150 @@ function isLikelyUserMessage(element) {
   return /user|human|\u7528\u6237/.test(attrs);
 }
 
-function extractLatestAssistantTextFromDom() {
-  const selectors = [
-    "[data-message-author-role='assistant']",
-    "[role='article']",
-    ".message-content",
-    ".ds-markdown",
-    ".markdown",
-    "[class*='assistant']",
-    "[class*='answer']"
-  ];
+function compareNodePosition(a, b) {
+  if (a === b) return 0;
+  const position = a.compareDocumentPosition(b);
+  if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+  if (position & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+  return 0;
+}
 
-  const candidates = [];
-  for (const selector of selectors) {
-    const matched = Array.from(document.querySelectorAll(selector));
-    for (const node of matched) {
-      if (!node || !isElementVisible(node)) continue;
-      if (isComposerArea(node)) continue;
-      if (isLikelyUserMessage(node)) continue;
+function shouldPreferAssistantEntry(candidate, existing) {
+  if (!existing) return true;
+  if (candidate.priority !== existing.priority) {
+    return candidate.priority < existing.priority;
+  }
+  if (candidate.depth !== existing.depth) {
+    return candidate.depth > existing.depth;
+  }
+  return candidate.text.length < existing.text.length;
+}
 
-      const text = normalizeForCompare(node.innerText || node.textContent || "");
-      if (!text) continue;
-      candidates.push({ node, text });
+function collectAssistantTextEntries() {
+  for (let groupIndex = 0; groupIndex < ASSISTANT_TEXT_SELECTOR_GROUPS.length; groupIndex += 1) {
+    const selectors = ASSISTANT_TEXT_SELECTOR_GROUPS[groupIndex];
+    const byText = new Map();
+
+    for (const selector of selectors) {
+      const matched = Array.from(document.querySelectorAll(selector));
+      for (const node of matched) {
+        if (!node || !isElementVisible(node)) continue;
+        if (isComposerArea(node)) continue;
+        if (isLikelyUserMessage(node)) continue;
+
+        const text = normalizeForCompare(node.innerText || node.textContent || "");
+        if (!text) continue;
+
+        const entry = {
+          node,
+          text,
+          priority: groupIndex + 1,
+          depth: getNodeDepth(node),
+          selector
+        };
+        const existing = byText.get(text);
+        if (shouldPreferAssistantEntry(entry, existing)) {
+          byText.set(text, entry);
+        }
+      }
+    }
+
+    const entries = Array.from(byText.values()).sort((a, b) => compareNodePosition(a.node, b.node));
+    if (entries.length > 0) {
+      return entries;
     }
   }
 
-  if (candidates.length === 0) {
+  return [];
+}
+
+function captureAssistantSnapshot() {
+  const entries = collectAssistantTextEntries();
+  return {
+    entries,
+    nodes: entries.map((entry) => entry.node),
+    textsByNode: new Map(entries.map((entry) => [entry.node, entry.text])),
+    latestText: entries.length > 0 ? entries[entries.length - 1].text : ""
+  };
+}
+
+function stripBaselinePrefix(currentText, baselineText) {
+  const normalizedCurrent = normalizeForCompare(currentText);
+  const normalizedBaseline = normalizeForCompare(baselineText);
+
+  if (!normalizedCurrent || !normalizedBaseline || normalizedCurrent === normalizedBaseline) {
     return "";
   }
 
-  return candidates[candidates.length - 1].text;
+  if (normalizedCurrent.startsWith(normalizedBaseline)) {
+    return normalizedCurrent
+      .slice(normalizedBaseline.length)
+      .replace(/^[\s|,:;，。；]+/, "")
+      .trim();
+  }
+
+  return "";
+}
+
+function extractAssistantAnswerAfterSnapshot(snapshot) {
+  const currentEntries = collectAssistantTextEntries();
+  if (currentEntries.length === 0) {
+    return { text: "", source: "none" };
+  }
+
+  const baselineNodes = new Set((snapshot && snapshot.nodes) || []);
+  const baselineTextsByNode = snapshot && snapshot.textsByNode ? snapshot.textsByNode : new Map();
+
+  const newEntries = currentEntries.filter((entry) => !baselineNodes.has(entry.node));
+  if (newEntries.length > 0) {
+    const latestNewEntry = newEntries[newEntries.length - 1];
+    return { text: latestNewEntry.text, source: "new-node" };
+  }
+
+  const changedEntries = currentEntries
+    .map((entry) => ({
+      entry,
+      previousText: baselineTextsByNode.get(entry.node) || ""
+    }))
+    .filter(({ entry, previousText }) => previousText && entry.text !== previousText);
+
+  if (changedEntries.length > 0) {
+    const latestChanged = changedEntries[changedEntries.length - 1];
+    const deltaText = stripBaselinePrefix(latestChanged.entry.text, latestChanged.previousText);
+    return {
+      text: deltaText || latestChanged.entry.text,
+      source: deltaText ? "changed-node-delta" : "changed-node-full"
+    };
+  }
+
+  const latestText = currentEntries[currentEntries.length - 1].text;
+  if (latestText && latestText !== ((snapshot && snapshot.latestText) || "")) {
+    const deltaText = stripBaselinePrefix(latestText, snapshot ? snapshot.latestText : "");
+    return {
+      text: deltaText || latestText,
+      source: deltaText ? "latest-delta" : "latest-full"
+    };
+  }
+
+  return { text: "", source: "unchanged" };
+}
+
+function extractLatestAssistantTextFromDom() {
+  const entries = collectAssistantTextEntries();
+  if (entries.length === 0) {
+    return "";
+  }
+
+  return entries[entries.length - 1].text;
+}
+
+function logAnswerExtraction(snapshot, extraction) {
+  logDiagnostic("answer-extraction", {
+    baselineCount: snapshot && snapshot.entries ? snapshot.entries.length : 0,
+    currentCount: collectAssistantTextEntries().length,
+    source: extraction ? extraction.source : "",
+    answerLength: extraction && extraction.text ? extraction.text.length : 0
+  });
 }
 async function dismissImageFullscreen() {
   let changed = false;
@@ -710,13 +856,45 @@ async function waitForAnswerComplete(
 }
 
 // Extract answer text from last message
-async function extractAnswerText() {
+async function extractAnswerText(snapshot = null) {
   try {
+    if (snapshot) {
+      const extraction = extractAssistantAnswerAfterSnapshot(snapshot);
+      logAnswerExtraction(snapshot, extraction);
+      return extraction.text || "";
+    }
     return extractLatestAssistantTextFromDom();
   } catch (error) {
     console.error("Failed to extract answer:", error);
     return "";
   }
+}
+
+async function waitForFreshAnswerText(snapshot, previousAnswerText, timeoutMs = 8000) {
+  const start = Date.now();
+  const normalizedPrevAnswer = normalizeForCompare(previousAnswerText);
+  let latestAnswer = "";
+
+  while (Date.now() - start < timeoutMs) {
+    latestAnswer = await extractAnswerText(snapshot);
+    const normalizedAnswer = normalizeForCompare(latestAnswer);
+
+    if (normalizedAnswer && normalizedAnswer !== normalizedPrevAnswer) {
+      logDiagnostic("answer-buffer-detected", {
+        waitMs: Date.now() - start,
+        answerLength: normalizedAnswer.length
+      });
+      return latestAnswer;
+    }
+
+    await sleep(500);
+  }
+
+  logDiagnostic("answer-buffer-timeout", {
+    waitMs: Date.now() - start,
+    previousAnswerLength: normalizedPrevAnswer.length
+  });
+  return latestAnswer;
 }
 
 // Request screenshot from background script
@@ -756,7 +934,8 @@ async function processQuestion(questionData) {
     const input = await locateInputBox();
     await typeText(input, questionData.question);
 
-    const previousAnswerText = getLatestAssistantText();
+    const baselineSnapshot = captureAssistantSnapshot();
+    const previousAnswerText = baselineSnapshot.latestText;
     const previousFingerprint = getStreamingFingerprint();
     const submission = await submitQuestionWithRetry(
       input,
@@ -772,17 +951,13 @@ async function processQuestion(questionData) {
     );
 
     await dismissImageFullscreen();
-    let answerText = await extractAnswerText();
+    let answerText = await extractAnswerText(baselineSnapshot);
     const normalizedPrevAnswer = normalizeForCompare(previousAnswerText);
     let normalizedAnswer = normalizeForCompare(answerText);
-    const sawStreamingChange = !!(completionState && completionState.observedNewAnswer);
 
-    if ((!normalizedAnswer || normalizedAnswer === normalizedPrevAnswer) && sawStreamingChange) {
-      const fp = normalizeForCompare(getStreamingFingerprint());
-      if (fp && fp !== normalizeForCompare(previousFingerprint)) {
-        answerText = fp;
-        normalizedAnswer = normalizeForCompare(answerText);
-      }
+    if (!normalizedAnswer || normalizedAnswer === normalizedPrevAnswer) {
+      answerText = await waitForFreshAnswerText(baselineSnapshot, previousAnswerText);
+      normalizedAnswer = normalizeForCompare(answerText);
     }
 
     if (!normalizedAnswer || normalizedAnswer === normalizedPrevAnswer) {
